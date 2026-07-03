@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dawzer</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="splash" class="splash">
+    <div class="splash-logo">
+      <span class="brand-badge">D</span><span class="brand-word">AWZER</span>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- ===================== TRANSPORT BAR ===================== -->
+    <header class="transport">
+      <div class="brand" data-title="Dawzer" data-tip="সহজ রেকর্ডিং স্টুডিও — মেট্রোনোমের সাথে টেক রেকর্ড করুন।">
+        <span class="brand-badge">D</span><span class="brand-word">AWZER</span>
+      </div>
+      <div class="tgroup">
+        <button id="metroBtn" class="tbtn" data-title="Metronome" data-tip="ক্লিক ট্র্যাক চালু বা বন্ধ করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M9 3h6l3 15H6L9 3z"/><path d="M5 20h14"/><path d="M12 18l3-9"/></svg>
+        </button>
+        <button id="recordBtn" class="tbtn rec" data-title="Record" data-tip="নির্বাচিত ট্র্যাকে নতুন টেক রেকর্ড করুন। এডিট মোডে প্লেহেড থেকে ওভারডাব হবে।">
+          <span class="rec-dot"></span>
+        </button>
+        <button id="editBtn" class="tbtn" data-title="Edit Mode" data-tip="চালু থাকলে রেকর্ড বোতাম চলতি টেকের উপর প্লেহেড থেকে রেকর্ড করবে।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button>
+        <button id="playPauseBtn" class="tbtn primary" data-title="Play / Pause" data-tip="চালান বা থামান — স্পেসবার দিয়েও কাজ করে।"></button>
+        <button id="stopBtn" class="tbtn" data-title="Stop" data-tip="রেকর্ডিং বা প্লেব্যাক থামিয়ে শুরুতে ফিরে যান।">
+          <svg viewBox="0 0 24 24" class="icn"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+
+      <div class="tgroup metro-fields">
+        <div class="mfield bpm" data-title="Tempo (BPM)" data-tip="গতি ঠিক করুন — তীর চেপে ধরে রাখুন, বা সংখ্যাটি টেনে ওঠানামা করান।">
+          <span class="chip-label">Tempo</span>
+          <div class="mbody">
+            <span id="bpmValue" class="bpm-num">100</span>
+            <span class="bpm-unit">BPM</span>
+            <div class="bpm-steppers">
+              <button id="bpmUp" class="bpm-arrow" tabindex="-1"><svg viewBox="0 0 24 24" class="icn xs"><path d="M18 15l-6-6-6 6"/></svg></button>
+              <button id="bpmDown" class="bpm-arrow" tabindex="-1"><svg viewBox="0 0 24 24" class="icn xs"><path d="M6 9l6 6 6-6"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <div class="mfield" data-title="Beats per Bar" data-tip="প্রতি বারে কয়টি বিট — প্রথম বিটে জোর পড়ে।">
+          <span class="chip-label">Beats</span>
+          <div class="mbody">
+            <select id="beatsPerBar"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option></select>
+          </div>
+        </div>
+        <div class="mfield" data-title="Count-in" data-tip="রেকর্ড শুরুর আগে কত বার মেট্রোনোম বাজবে।">
+          <span class="chip-label">Count-in</span>
+          <div class="mbody">
+            <select id="countIn"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select>
+          </div>
+        </div>
+        <div class="mfield click" data-title="Click Volume" data-tip="মেট্রোনোম ক্লিকের শব্দের মাত্রা।">
+          <span class="chip-label">Click</span>
+          <div class="mbody"><input type="range" id="clickVol" min="0" max="1" step="0.01" value="0.7" /></div>
+        </div>
+      </div>
+
+      <div class="tgroup right">
+        <div id="clock" class="clock" data-title="Timeline" data-tip="প্লেহেডের বর্তমান অবস্থান / মোট দৈর্ঘ্য।">0:00.0 / 0:00.0</div>
+        <button id="takesBtn" class="tbtn" data-title="Takes" data-tip="নির্বাচিত ট্র্যাকের সব টেকের তালিকা খুলুন বা বন্ধ করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        </button>
+        <button id="testBtn" class="tbtn" data-title="Test Output" data-tip="নির্বাচিত আউটপুট ডিভাইসে একটি টোন বাজিয়ে পরীক্ষা করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+        </button>
+        <button id="addTrackBtn" class="tbtn" data-title="Add Track" data-tip="একটি নতুন খালি ট্র্যাক যোগ করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button id="loadBackingBtn" class="tbtn" data-title="Load Track" data-tip="ফাইল থেকে অডিও নিয়ে নির্বাচিত ট্র্যাকে যোগ করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M4 5h5l2 3h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+        </button>
+        <button id="settingsBtn" class="tbtn" data-title="Audio Setup" data-tip="ইনপুট ও আউটপুট ডিভাইস নির্বাচন করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===================== SETTINGS PANEL ===================== -->
+    <section id="settingsPanel" class="settings hidden">
+      <div class="set-row"><label>Input (record from)</label><select id="inputDevice"></select></div>
+      <div class="set-row"><label>Output (listen through)</label><select id="outputDevice"></select></div>
+      <div class="set-row"><label>Monitor input</label>
+        <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
+      <div class="set-row"><label>Tracks volume</label><input type="range" id="backingVol" min="0" max="1" step="0.01" value="0.85" /></div>
+      <div class="set-row"><label>Take volume</label><input type="range" id="takeVol" min="0" max="1" step="0.01" value="1" /></div>
+      <div class="set-row"><button id="refreshDevices" class="ghost">
+        <svg viewBox="0 0 24 24" class="icn sm"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>Refresh devices</button>
+        <span id="deviceStatus" class="hint"></span></div>
+    </section>
+
+    <!-- ===================== TIMELINE EDITOR ===================== -->
+    <section class="editor">
+      <div class="labels" id="labels">
+        <div class="ruler-spacer">
+          <span class="zoom-hint" data-title="Zoom" data-tip="টাইমলাইন জুম করুন — Ctrl + স্ক্রল বা ট্র্যাকপ্যাডে পিঞ্চ।">
+            <svg viewBox="0 0 24 24" class="icn sm"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg>
+          </span>
+        </div>
+        <div id="trackLabels"></div>
+      </div>
+
+      <div class="timeline-scroll" id="timelineScroll">
+        <div class="timeline" id="timeline">
+          <canvas id="rulerCanvas" class="ruler"></canvas>
+          <div id="trackLanes"></div>
+          <div class="playhead" id="playhead"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== TAKES DRAWER (full-width, collapsible) ===================== -->
+    <section id="takesPanel" class="takes-panel collapsed">
+      <button class="tp-header" id="tpHeader">
+        <svg viewBox="0 0 24 24" class="icn sm caret"><path d="M9 6l6 6-6 6"/></svg>
+        <span>Takes</span><span id="tpTrack" class="tp-track"></span>
+      </button>
+      <div class="tp-body" id="tpBody"></div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="tooltip" class="tooltip"></div>
+  <div id="ctxMenu" class="ctx-menu hidden"></div>
+
+  <script src="lamejs.min.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,707 @@
+'use strict';
+
+const { ipcRenderer } = require('electron');
+// `lamejs` (MP3 encoder) is already a global from lamejs.min.js.
+
+// ===========================================================================
+// Config / State
+// ===========================================================================
+let PPS = 100;
+const PPS_MIN = 24, PPS_MAX = 420;
+const MIN_DURATION = 20;
+const RULER_H = 32, TRACK_H = 118;
+const WAVE_H = TRACK_H - 14;
+const TRACK_COLORS = ['#9cb080', '#618764', '#7fb0a0', '#c2b56f', '#8bbf8f', '#b58f76', '#7f9ec0'];
+
+const ICON_PLAY = '<svg viewBox="0 0 24 24" class="icn"><polygon points="7,4 20,12 7,20" fill="currentColor" stroke="none"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" class="icn"><rect x="7" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/></svg>';
+const SVG_TRASH = '<svg viewBox="0 0 24 24" class="icn xs"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>';
+
+const state = {
+  ctx: null, inputStream: null,
+  inputDeviceId: 'default', outputDeviceId: 'default',
+  monitor: false, monitorSource: null, monitorGain: null, tracksGain: null,
+
+  bpm: 100, editMode: false,
+  playhead: 0, playing: false, playStartCtx: 0, playStartHead: 0, raf: null,
+
+  metroRunning: false, nextNoteTime: 0, beatCounter: 0, countInLeft: 0, timerId: null, onDownbeat: null,
+
+  recording: false, editing: false, recorder: null, recChunks: [],
+  analyser: null, liveBuf: null, livePeaks: [], recStartHead: 0, recStartCtx: 0, recRaf: null, recTrackId: null,
+
+  tracks: [], trackSeq: 0, selectedTrackId: null, playSources: [],
+};
+let idCounter = 0;
+
+// ===========================================================================
+// Elements
+// ===========================================================================
+const $ = (id) => document.getElementById(id);
+const el = {};
+[
+  'metroBtn','recordBtn','editBtn','playPauseBtn','stopBtn',
+  'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
+  'clock','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
+  'settingsPanel','inputDevice','outputDevice','monitorToggle','backingVol','refreshDevices','deviceStatus',
+  'labels','trackLabels','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
+  'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
+].forEach((id) => (el[id] = $(id)));
+
+// ===========================================================================
+// Audio context
+// ===========================================================================
+function ctx() {
+  if (!state.ctx) {
+    state.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    state.tracksGain = state.ctx.createGain();
+    state.tracksGain.gain.value = parseFloat(el.backingVol.value);
+    state.tracksGain.connect(state.ctx.destination);
+  }
+  if (state.ctx.state === 'suspended') state.ctx.resume();
+  return state.ctx;
+}
+async function applyOutput() {
+  const c = ctx();
+  if (typeof c.setSinkId === 'function') {
+    try { await c.setSinkId(state.outputDeviceId === 'default' ? '' : state.outputDeviceId); }
+    catch (e) { console.warn('setSinkId', e); }
+  }
+}
+
+// ===========================================================================
+// Devices
+// ===========================================================================
+async function primePermission() {
+  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach((t) => t.stop()); }
+  catch (e) { el.deviceStatus.textContent = 'Microphone permission denied.'; }
+}
+async function listDevices() {
+  await primePermission();
+  const d = await navigator.mediaDevices.enumerateDevices();
+  const ins = d.filter((x) => x.kind === 'audioinput'), outs = d.filter((x) => x.kind === 'audiooutput');
+  fill(el.inputDevice, ins, state.inputDeviceId);
+  fill(el.outputDevice, outs, state.outputDeviceId);
+  el.deviceStatus.textContent = `${ins.length} in · ${outs.length} out`;
+}
+function fill(sel, devices, current) {
+  sel.innerHTML = '';
+  if (!devices.length) { sel.innerHTML = '<option value="default">System default</option>'; return; }
+  devices.forEach((dv, i) => { const o = document.createElement('option'); o.value = dv.deviceId || 'default'; o.textContent = dv.label || `Device ${i + 1}`; sel.appendChild(o); });
+  if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+}
+async function openInput() {
+  if (state.inputStream) state.inputStream.getTracks().forEach((t) => t.stop());
+  state.inputStream = await navigator.mediaDevices.getUserMedia({
+    audio: { deviceId: state.inputDeviceId !== 'default' ? { exact: state.inputDeviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  });
+  setupMonitorAndAnalyser();
+  return state.inputStream;
+}
+function setupMonitorAndAnalyser() {
+  const c = ctx();
+  const src = c.createMediaStreamSource(state.inputStream);
+  if (!state.monitorGain) { state.monitorGain = c.createGain(); state.monitorGain.connect(c.destination); }
+  state.monitorGain.gain.value = state.monitor ? 1 : 0;
+  src.connect(state.monitorGain);
+  state.analyser = c.createAnalyser(); state.analyser.fftSize = 1024; state.liveBuf = new Float32Array(state.analyser.fftSize);
+  src.connect(state.analyser); state.monitorSource = src;
+}
+
+// ===========================================================================
+// Waveform helpers
+// ===========================================================================
+function computePeaks(buffer, pps) {
+  const cols = Math.max(1, Math.ceil(buffer.duration * pps));
+  const chs = []; for (let c = 0; c < buffer.numberOfChannels; c++) chs.push(buffer.getChannelData(c));
+  const spp = buffer.length / cols; const peaks = new Float32Array(cols * 2);
+  for (let x = 0; x < cols; x++) {
+    const s = Math.floor(x * spp), e = Math.min(buffer.length, Math.floor((x + 1) * spp));
+    let mn = 0, mx = 0;
+    for (let i = s; i < e; i++) { let v = 0; for (let c = 0; c < chs.length; c++) v += chs[c][i]; v /= chs.length; if (v < mn) mn = v; if (v > mx) mx = v; }
+    peaks[x * 2] = mn; peaks[x * 2 + 1] = mx;
+  }
+  return peaks;
+}
+function drawPeaksRange(canvas, peaks, h, color, startCol, endCol) {
+  const total = peaks.length / 2;
+  startCol = Math.max(0, startCol); endCol = Math.min(total, Math.max(startCol + 1, endCol));
+  const w = endCol - startCol;
+  canvas.width = Math.max(1, w); canvas.height = h;
+  const g = canvas.getContext('2d'); g.clearRect(0, 0, canvas.width, h);
+  const mid = h / 2, amp = h / 2 * 0.92; g.strokeStyle = color; g.lineWidth = 1; g.beginPath();
+  for (let x = 0; x < w; x++) { const c = startCol + x, mn = peaks[c * 2], mx = peaks[c * 2 + 1]; g.moveTo(x + 0.5, mid - mx * amp); g.lineTo(x + 0.5, Math.max(mid - mn * amp, mid - mx * amp + 0.5)); }
+  g.stroke();
+}
+function roundRect(g, x, y, w, h, r) { r = Math.min(r, w / 2, h / 2); g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function drawMini(canvas, peaks, color) {
+  const dpr = window.devicePixelRatio || 1, cssW = canvas.clientWidth || 260, cssH = 36;
+  canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+  const g = canvas.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, cssW, cssH);
+  g.fillStyle = '#1f2a2c'; roundRect(g, 0, 0, cssW, cssH, 7); g.fill();
+  const cols = peaks.length / 2, barW = 2.5, gap = 1.6, step = barW + gap;
+  const n = Math.max(1, Math.floor((cssW - 6) / step)), mid = cssH / 2, maxAmp = cssH / 2 - 4;
+  g.fillStyle = color || '#9cb080';
+  for (let i = 0; i < n; i++) {
+    const c0 = Math.floor(i / n * cols), c1 = Math.max(c0 + 1, Math.floor((i + 1) / n * cols));
+    let amp = 0; for (let x = c0; x < c1 && x < cols; x++) { const a = Math.max(Math.abs(peaks[x * 2]), Math.abs(peaks[x * 2 + 1])); if (a > amp) amp = a; }
+    const barH = Math.max(2.5, amp * maxAmp * 2), bx = 3 + i * step + gap / 2;
+    roundRect(g, bx, mid - barH / 2, barW, barH, barW / 2); g.fill();
+  }
+}
+
+// ===========================================================================
+// Track / take model
+// ===========================================================================
+function selectedTrack() { return state.tracks.find((t) => t.id === state.selectedTrackId) || null; }
+function trackById(id) { return state.tracks.find((t) => t.id === id) || null; }
+function activeTake(tr) { return tr ? (tr.takes.find((t) => t.id === tr.activeTakeId) || null) : null; }
+function visDur(tk) { return tk.trimEnd - tk.trimStart; }
+
+function addTrack(silent) {
+  state.trackSeq++;
+  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], activeTakeId: null, takeSeq: 0, els: null };
+  state.tracks.push(tr);
+  state.selectedTrackId = tr.id;
+  buildTracksDOM();
+  if (!silent) layout();
+  renderTakesWindow();
+  return tr;
+}
+function deleteTrack(id) {
+  state.tracks = state.tracks.filter((t) => t.id !== id);
+  if (state.selectedTrackId === id) state.selectedTrackId = state.tracks.length ? state.tracks[state.tracks.length - 1].id : null;
+  buildTracksDOM(); layout(); renderTakesWindow();
+}
+function selectTrack(id) { if (state.selectedTrackId === id) return; state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); }
+function addTake(tr, buffer, offset, label) {
+  tr.takeSeq++;
+  const tk = { id: ++idCounter, num: tr.takeSeq, buffer, peaks: null, createdAt: new Date(), offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, label: label || `Take ${tr.takeSeq}` };
+  tr.takes.push(tk); tr.activeTakeId = tk.id;
+  return tk;
+}
+function setActiveTake(tr, takeId) { tr.activeTakeId = takeId; renderTrack(tr); renderTakesWindow(); layout(); }
+function removeTake(tr, takeId) {
+  tr.takes = tr.takes.filter((t) => t.id !== takeId);
+  if (tr.activeTakeId === takeId) tr.activeTakeId = tr.takes.length ? tr.takes[tr.takes.length - 1].id : null;
+  renderTrack(tr); renderTakesWindow(); layout();
+}
+
+// ===========================================================================
+// Track DOM
+// ===========================================================================
+function buildTracksDOM() {
+  el.trackLabels.innerHTML = ''; el.trackLanes.innerHTML = '';
+  state.tracks.forEach((tr) => {
+    const label = document.createElement('div');
+    label.className = 'lane-label track'; label.style.setProperty('--tc', tr.color);
+    label.innerHTML = `<div class="ll-row"><span class="swatch"></span><span class="ll-title"></span><span class="ll-rec hidden"><span class="dot"></span>REC</span></div>`;
+    label.querySelector('.swatch').style.background = tr.color;
+    label.addEventListener('click', () => selectTrack(tr.id));
+    label.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
+
+    const body = document.createElement('div');
+    body.className = 'lane-body track'; body.dataset.track = tr.id; body.style.setProperty('--tc', tr.color);
+    const clip = document.createElement('div');
+    clip.className = 'clip hidden';
+    clip.setAttribute('data-title', 'Audio Clip');
+    clip.setAttribute('data-tip', 'মাঝখান টেনে সরান; দুই প্রান্ত টেনে ছোট/বড় করুন। ডান-ক্লিকে অপশন।');
+    const trimL = document.createElement('div'); trimL.className = 'trim left';
+    const trimR = document.createElement('div'); trimR.className = 'trim right';
+    const canvas = document.createElement('canvas');
+    clip.appendChild(trimL); clip.appendChild(canvas); clip.appendChild(trimR);
+    body.appendChild(clip);
+
+    el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
+    tr.els = { label, body, clip, canvas, trimL, trimR, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
+
+    body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
+    body.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
+    clip.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.trim')) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) moveTake(e, tr, tk); });
+    trimL.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimLeft(e, tr, tk); });
+    trimR.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimRight(e, tr, tk); });
+  });
+  state.tracks.forEach(renderTrack);
+  updateSelectionUI();
+  updatePlayheadHeight();
+}
+function renderTrack(tr) {
+  if (!tr.els) return;
+  const { clip, canvas, title } = tr.els;
+  title.textContent = tr.name;
+  const tk = activeTake(tr);
+  if (tk && !(state.recording && state.recTrackId === tr.id)) {
+    clip.classList.remove('recording', 'hidden');
+    const vd = visDur(tk), w = Math.max(4, Math.round(vd * PPS));
+    clip.style.left = Math.round(tk.offset * PPS) + 'px'; clip.style.width = w + 'px';
+    clip.style.borderColor = tr.color; clip.style.background = 'color-mix(in srgb, ' + tr.color + ' 22%, #223230)';
+    if (!tk.peaks) tk.peaks = computePeaks(tk.buffer, PPS);
+    drawPeaksRange(canvas, tk.peaks, WAVE_H, tr.color, Math.floor(tk.trimStart * PPS), Math.ceil(tk.trimEnd * PPS));
+    canvas.style.width = w + 'px'; canvas.style.height = WAVE_H + 'px';
+  } else if (!(state.recording && state.recTrackId === tr.id)) {
+    clip.classList.add('hidden');
+  }
+}
+function updateSelectionUI() {
+  state.tracks.forEach((tr) => {
+    if (!tr.els) return;
+    const sel = tr.id === state.selectedTrackId;
+    tr.els.label.classList.toggle('selected', sel);
+    tr.els.body.classList.toggle('selected', sel);
+    tr.els.rec.classList.toggle('hidden', !sel);
+  });
+}
+function updatePlayheadHeight() { el.playhead.style.height = (RULER_H + state.tracks.length * TRACK_H) + 'px'; }
+
+// ---- clip interactions ----
+function moveTake(e, tr, tk) {
+  selectTrack(tr.id);
+  const d = { x: e.clientX, off: tk.offset };
+  const move = (ev) => { tk.offset = Math.max(0, d.off + (ev.clientX - d.x) / PPS); renderTrack(tr); renderPlayhead(); };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+function trimLeft(e, tr, tk) {
+  selectTrack(tr.id);
+  const d = { x: e.clientX, ts: tk.trimStart, off: tk.offset };
+  const move = (ev) => {
+    const dx = (ev.clientX - d.x) / PPS;
+    let nts = Math.min(Math.max(0, d.ts + dx), tk.trimEnd - 0.05);
+    const applied = nts - d.ts; tk.trimStart = nts; tk.offset = Math.max(0, d.off + applied);
+    renderTrack(tr); renderPlayhead();
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+function trimRight(e, tr, tk) {
+  selectTrack(tr.id);
+  const d = { x: e.clientX, te: tk.trimEnd };
+  const move = (ev) => { const dx = (ev.clientX - d.x) / PPS; tk.trimEnd = Math.min(tk.buffer.duration, Math.max(tk.trimStart + 0.05, d.te + dx)); renderTrack(tr); renderPlayhead(); };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+
+async function loadFileInto(tr) {
+  const res = await ipcRenderer.invoke('open-audio');
+  if (!res.ok) return;
+  try {
+    const buf = await ctx().decodeAudioData(res.data.slice(0));
+    addTake(tr, buf, 0, res.name.replace(/\.[^.]+$/, ''));
+    selectTrack(tr.id); renderTrack(tr); renderTakesWindow(); layout();
+    showToast(`Loaded into ${tr.name}`);
+  } catch (e) { console.error(e); showToast('Could not decode that file'); }
+}
+function loadIntoSelected() { let tr = selectedTrack(); if (!tr) tr = addTrack(true); loadFileInto(tr); }
+
+// ===========================================================================
+// Context menu
+// ===========================================================================
+function showTrackMenu(e, tr) {
+  const m = el.ctxMenu; m.innerHTML = '';
+  const item = (label, fn, cls) => { const it = document.createElement('div'); it.className = 'ctx-item' + (cls ? ' ' + cls : ''); it.textContent = label; it.onclick = () => { hideCtx(); fn(); }; m.appendChild(it); };
+  item('Load audio into track…', () => loadFileInto(tr));
+  if (activeTake(tr)) item('Remove current take', () => removeTake(tr, tr.activeTakeId));
+  const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
+  item('Delete track', () => deleteTrack(tr.id), 'danger');
+  m.classList.remove('hidden');
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px';
+  m.style.top = Math.min(e.clientY, window.innerHeight - mh - 6) + 'px';
+}
+function hideCtx() { el.ctxMenu.classList.add('hidden'); }
+
+// ===========================================================================
+// Timeline sizing / rendering
+// ===========================================================================
+function contentDuration() {
+  let d = MIN_DURATION;
+  state.tracks.forEach((tr) => { const tk = activeTake(tr); if (tk) d = Math.max(d, tk.offset + visDur(tk)); });
+  if (state.recording) d = Math.max(d, state.playhead + 1);
+  return d;
+}
+function invalidatePeaks() { state.tracks.forEach((tr) => tr.takes.forEach((tk) => (tk.peaks = null))); }
+function layout() {
+  const px = Math.ceil(contentDuration() * PPS);
+  el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px';
+  drawRuler(px);
+  if (!state.recording) state.tracks.forEach(renderTrack);
+  updatePlayheadHeight();
+  renderPlayhead();
+}
+function drawRuler(px) {
+  const c = el.rulerCanvas, h = RULER_H; c.width = px; c.height = h;
+  const g = c.getContext('2d'); g.fillStyle = '#1c2628'; g.fillRect(0, 0, px, h);
+  g.strokeStyle = '#46594f'; g.fillStyle = '#8fa596'; g.font = '10px sans-serif'; g.lineWidth = 1;
+  const secs = Math.ceil(px / PPS), labelEvery = PPS < 45 ? 5 : (PPS < 90 ? 2 : 1);
+  for (let s = 0; s <= secs; s++) {
+    const x = Math.round(s * PPS) + 0.5, major = s % labelEvery === 0;
+    g.beginPath(); g.moveTo(x, h - (major ? 15 : 7)); g.lineTo(x, h); g.stroke();
+    if (major) g.fillText(fmt(s), x + 3, 13);
+  }
+}
+function renderPlayhead() { el.playhead.style.left = Math.round(state.playhead * PPS) + 'px'; el.clock.textContent = `${fmt(state.playhead, true)} / ${fmt(contentDuration(), true)}`; }
+function fmt(s, tenths) { if (!isFinite(s)) s = 0; const m = Math.floor(s / 60), sec = Math.floor(s % 60).toString().padStart(2, '0'); if (tenths) return `${m}:${sec}.${Math.floor((s * 10) % 10)}`; return `${m}:${sec}`; }
+function autoScroll() { const x = state.playhead * PPS, sc = el.timelineScroll; if (x < sc.scrollLeft + 40 || x > sc.scrollLeft + sc.clientWidth - 60) sc.scrollLeft = x - sc.clientWidth * 0.4; }
+
+// ===========================================================================
+// Zoom
+// ===========================================================================
+function setZoom(newPPS, anchorClientX) {
+  newPPS = Math.max(PPS_MIN, Math.min(PPS_MAX, newPPS));
+  if (Math.abs(newPPS - PPS) < 0.01) return;
+  const sc = el.timelineScroll, rect = el.timeline.getBoundingClientRect();
+  const cursorTime = (anchorClientX - rect.left) / PPS;
+  PPS = newPPS; invalidatePeaks(); layout();
+  sc.scrollLeft = cursorTime * PPS - (anchorClientX - sc.getBoundingClientRect().left);
+  renderPlayhead();
+}
+
+// ===========================================================================
+// Metronome
+// ===========================================================================
+function spb() { return 60 / state.bpm; }
+function bpb() { return parseInt(el.beatsPerBar.value, 10) || 4; }
+function click(time, accent, countin) {
+  const c = state.ctx, o = c.createOscillator(), g = c.createGain();
+  const v = parseFloat(el.clickVol.value) * (countin ? 0.9 : 1);
+  o.frequency.value = accent ? 1500 : 900;
+  g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, v), time + 0.001); g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+  o.connect(g); g.connect(c.destination); o.start(time); o.stop(time + 0.06);
+}
+function scheduler() {
+  const c = state.ctx;
+  while (state.nextNoteTime < c.currentTime + 0.12) {
+    const beatInBar = state.beatCounter % bpb(), countin = state.countInLeft > 0;
+    click(state.nextNoteTime, beatInBar === 0, countin);
+    if (countin) { state.countInLeft--; if (state.countInLeft === 0 && state.onDownbeat) { const cb = state.onDownbeat; state.onDownbeat = null; cb(state.nextNoteTime + spb()); } }
+    state.nextNoteTime += spb(); state.beatCounter++;
+  }
+  state.timerId = setTimeout(scheduler, 25);
+}
+function startMetronome(countInBars, onDownbeat) {
+  const c = ctx();
+  state.beatCounter = 0; state.countInLeft = (countInBars || 0) * bpb(); state.onDownbeat = onDownbeat || null;
+  state.nextNoteTime = c.currentTime + 0.1; state.metroRunning = true;
+  if (state.countInLeft === 0 && state.onDownbeat) { const cb = state.onDownbeat; state.onDownbeat = null; cb(state.nextNoteTime); }
+  scheduler();
+}
+function stopMetronome() { state.metroRunning = false; if (state.timerId) { clearTimeout(state.timerId); state.timerId = null; } state.onDownbeat = null; }
+
+// ===========================================================================
+// Playback
+// ===========================================================================
+function stopSources() { state.playSources.forEach((s) => { try { s.stop(); } catch (_) {} }); state.playSources = []; }
+function scheduleTake(tk, head, ctxStart, exceptTrimLive) {
+  const start = tk.offset, vd = visDur(tk), end = start + vd;
+  if (end <= head) return;
+  const s = state.ctx.createBufferSource(); s.buffer = tk.buffer; s.connect(state.tracksGain);
+  if (head <= start) s.start(ctxStart + (start - head), tk.trimStart, vd);
+  else { const into = head - start; s.start(ctxStart, tk.trimStart + into, vd - into); }
+  state.playSources.push(s);
+}
+function scheduleAllTracks(head, ctxStart, exceptId) {
+  state.tracks.forEach((tr) => { if (tr.id === exceptId) return; const tk = activeTake(tr); if (tk) scheduleTake(tk, head, ctxStart); });
+}
+function startPlayback() {
+  const c = ctx(); applyOutput(); stopSources();
+  const ctxStart = c.currentTime + 0.06; state.playStartCtx = ctxStart; state.playStartHead = state.playhead;
+  scheduleAllTracks(state.playhead, ctxStart, null);
+  state.playing = true; updatePlayIcon(); tickPlayhead();
+}
+function tickPlayhead() {
+  if (!state.playing) return;
+  state.playhead = state.playStartHead + (state.ctx.currentTime - state.playStartCtx);
+  if (state.playhead >= contentDuration()) { state.playhead = contentDuration(); pausePlayback(); return; }
+  renderPlayhead(); autoScroll(); state.raf = requestAnimationFrame(tickPlayhead);
+}
+function pausePlayback() {
+  if (!state.playing) return;
+  state.playhead = state.playStartHead + (state.ctx.currentTime - state.playStartCtx);
+  state.playing = false; stopSources(); if (state.raf) cancelAnimationFrame(state.raf); updatePlayIcon(); renderPlayhead();
+}
+function seek(seconds, keepPlaying) { state.playhead = Math.max(0, Math.min(seconds, contentDuration())); if (state.playing && keepPlaying) { stopSources(); startPlayback(); } renderPlayhead(); }
+function updatePlayIcon() { el.playPauseBtn.innerHTML = state.playing ? ICON_PAUSE : ICON_PLAY; el.playPauseBtn.classList.toggle('playing', state.playing); }
+
+// ===========================================================================
+// Recording
+// ===========================================================================
+async function beginRecording(editing) {
+  if (state.recording) return;
+  let tr = selectedTrack(); if (!tr) tr = addTrack(true);
+  const hasActive = !!activeTake(tr);
+  if (editing && !hasActive) editing = false;
+  ctx(); await applyOutput();
+  try { await openInput(); } catch (e) { console.error(e); showToast('Cannot open input device'); return; }
+
+  state.recording = true; state.editing = editing; state.recTrackId = tr.id;
+  state.recStartHead = state.playhead; state.livePeaks = [];
+  el.recordBtn.classList.add('armed');
+  const countInBars = parseInt(el.countIn.value, 10) || 0;
+  showToast(countInBars ? 'Counting in…' : `Recording into ${tr.name}…`);
+  const onDown = (downCtxTime) => {
+    const delay = Math.max(0, (downCtxTime - state.ctx.currentTime) * 1000);
+    setTimeout(() => {
+      if (!state.recording) return;
+      state.recChunks = [];
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      state.recorder = new MediaRecorder(state.inputStream, { mimeType: mime });
+      state.recorder.ondataavailable = (e) => { if (e.data.size) state.recChunks.push(e.data); };
+      state.recorder.onstop = finalizeRecording;
+      state.recStartCtx = state.ctx.currentTime; state.recorder.start(); recFrame();
+    }, delay);
+    scheduleAllTracks(state.recStartHead, downCtxTime, tr.id); // hear other tracks
+  };
+  startMetronome(countInBars, onDown);
+}
+function recFrame() {
+  if (!state.recording || !state.recorder) return;
+  const elapsed = Math.max(0, state.ctx.currentTime - state.recStartCtx);
+  state.playhead = state.recStartHead + elapsed;
+  state.analyser.getFloatTimeDomainData(state.liveBuf);
+  let mx = 0; for (let i = 0; i < state.liveBuf.length; i++) { const a = Math.abs(state.liveBuf[i]); if (a > mx) mx = a; }
+  const dur = state.playhead - state.recStartHead, need = Math.floor(dur * PPS);
+  while (state.livePeaks.length <= need) state.livePeaks.push(mx);
+  drawRecordingClip();
+  const px = Math.ceil(contentDuration() * PPS);
+  el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px'; drawRuler(px);
+  renderPlayhead(); autoScroll();
+  state.recRaf = requestAnimationFrame(recFrame);
+}
+function drawRecordingClip() {
+  const tr = trackById(state.recTrackId); if (!tr || !tr.els) return;
+  const { clip, canvas } = tr.els;
+  clip.classList.remove('hidden'); clip.classList.add('recording');
+  clip.style.left = Math.round(state.recStartHead * PPS) + 'px';
+  clip.style.width = Math.max(2, state.livePeaks.length) + 'px';
+  const w = Math.max(1, state.livePeaks.length), h = WAVE_H;
+  canvas.width = w; canvas.height = h; canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const g = canvas.getContext('2d'); g.clearRect(0, 0, w, h); const mid = h / 2, amp = h / 2 * 0.92;
+  g.strokeStyle = '#e0776a'; g.lineWidth = 1; g.beginPath();
+  for (let i = 0; i < state.livePeaks.length; i++) { const v = state.livePeaks[i]; g.moveTo(i + 0.5, mid - v * amp); g.lineTo(i + 0.5, mid + v * amp); }
+  g.stroke();
+}
+function stopRecording() {
+  if (state.recRaf) cancelAnimationFrame(state.recRaf);
+  if (state.recorder && state.recorder.state !== 'inactive') state.recorder.stop(); else finalizeRecording();
+  stopMetronome(); stopSources(); state.recording = false; el.recordBtn.classList.remove('armed');
+}
+async function finalizeRecording() {
+  el.recordBtn.classList.remove('armed');
+  const editing = state.editing, tr = trackById(state.recTrackId); state.editing = false;
+  if (tr && tr.els) tr.els.clip.classList.remove('recording');
+  if (!state.recChunks || !state.recChunks.length) { state.recording = false; if (tr) renderTrack(tr); showToast('Nothing captured'); return; }
+  const blob = new Blob(state.recChunks, { type: state.recorder.mimeType });
+  let recBuf; try { recBuf = await ctx().decodeAudioData((await blob.arrayBuffer()).slice(0)); } catch (e) { console.error('decode', e); showToast('Decode failed'); return; }
+  state.recording = false;
+  const act = tr ? activeTake(tr) : null;
+  if (editing && act) {
+    const keep = Math.max(0, state.recStartHead - act.offset);
+    act.buffer = concatBuffers(ctx(), act.buffer, keep, recBuf); act.trimStart = 0; act.trimEnd = act.buffer.duration; act.peaks = null;
+    showToast(`Overdubbed ${tr.name} · Take ${act.num}`);
+  } else if (tr) {
+    const tk = addTake(tr, recBuf, state.recStartHead);
+    showToast(`${tr.name} · Take ${tk.num} recorded`);
+  }
+  state.playhead = state.recStartHead; if (tr) renderTrack(tr); layout(); renderTakesWindow();
+}
+function concatBuffers(c, a, keepSeconds, b) {
+  const sr = a.sampleRate, keep = Math.max(0, Math.min(a.length, Math.floor(keepSeconds * sr))), numCh = Math.max(a.numberOfChannels, b.numberOfChannels);
+  const out = c.createBuffer(numCh, keep + b.length, sr);
+  for (let ch = 0; ch < numCh; ch++) {
+    const od = out.getChannelData(ch), ad = a.getChannelData(Math.min(ch, a.numberOfChannels - 1));
+    for (let i = 0; i < keep; i++) od[i] = ad[i];
+    const bd = b.getChannelData(Math.min(ch, b.numberOfChannels - 1));
+    for (let i = 0; i < b.length; i++) od[keep + i] = bd[i];
+  }
+  return out;
+}
+
+// ===========================================================================
+// Floating Takes window
+// ===========================================================================
+function renderTakesWindow() {
+  const tr = selectedTrack();
+  el.tpTrack.textContent = tr ? tr.name : '';
+  el.tpBody.innerHTML = '';
+  if (!tr || !tr.takes.length) { el.tpBody.innerHTML = '<div class="tw-empty">No takes yet.</div>'; return; }
+  [...tr.takes].sort((a, b) => b.num - a.num).forEach((take) => {
+    const item = document.createElement('div');
+    item.className = 'take-item' + (take.id === tr.activeTakeId ? ' current' : '');
+    item.setAttribute('data-title', 'Take'); item.setAttribute('data-tip', 'ক্লিক করে এই টেকটি ট্র্যাকে সক্রিয় করুন।');
+    item.innerHTML = `
+      <div class="take-num">#${take.num}</div>
+      <div class="take-mini"><canvas></canvas><div class="take-meta">${fmt(take.buffer.duration)} · ${take.createdAt.toLocaleTimeString()}</div></div>
+      <div class="take-ctrls">
+        <button data-a="use" data-title="Use" data-tip="এই টেকটি ট্র্যাকে সক্রিয় করুন।">Use</button>
+        <button data-a="wav" data-title="Export WAV" data-tip="লসলেস WAV হিসেবে সেভ করুন।">WAV</button>
+        <button data-a="mp3" data-title="Export MP3" data-tip="১৯২ kbps MP3 হিসেবে সেভ করুন।">MP3</button>
+        <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই টেকটি মুছে ফেলুন।">${SVG_TRASH}</button>
+      </div>`;
+    item.onclick = (e) => { if (!e.target.closest('button')) setActiveTake(tr, take.id); };
+    item.querySelector('[data-a="use"]').onclick = () => setActiveTake(tr, take.id);
+    item.querySelector('[data-a="wav"]').onclick = () => exportTake(take, 'wav', tr);
+    item.querySelector('[data-a="mp3"]').onclick = () => exportTake(take, 'mp3', tr);
+    item.querySelector('[data-a="del"]').onclick = () => removeTake(tr, take.id);
+    el.tpBody.appendChild(item);
+    if (!take.peaks) take.peaks = computePeaks(take.buffer, PPS);
+    requestAnimationFrame(() => drawMini(item.querySelector('canvas'), take.peaks, tr.color));
+  });
+}
+function toggleTakesWindow(force) {
+  const collapsed = el.takesPanel.classList.contains('collapsed');
+  const show = force !== undefined ? force : collapsed;
+  el.takesPanel.classList.toggle('collapsed', !show);
+  el.takesBtn.classList.toggle('active', show);
+  if (show) renderTakesWindow();
+}
+
+// ===========================================================================
+// Export
+// ===========================================================================
+async function exportTake(take, format, tr) {
+  showToast(`Exporting ${format.toUpperCase()}…`);
+  const bytes = format === 'wav' ? encodeWav(take.buffer) : encodeMp3(take.buffer);
+  const base = `${(tr ? tr.name : 'Take').replace(/\s+/g, '_')}_take${take.num}`;
+  const res = await ipcRenderer.invoke('save-file', { defaultName: `${base}.${format}`, data: bytes });
+  showToast(res.ok ? 'Exported' : 'Cancelled');
+}
+function encodeWav(buffer) {
+  const numCh = buffer.numberOfChannels, sr = buffer.sampleRate, len = buffer.length, blockAlign = numCh * 2, dataSize = len * blockAlign;
+  const b = new ArrayBuffer(44 + dataSize), v = new DataView(b);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, 'RIFF'); v.setUint32(4, 36 + dataSize, true); ws(8, 'WAVE'); ws(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, numCh, true); v.setUint32(24, sr, true); v.setUint32(28, sr * blockAlign, true); v.setUint16(32, blockAlign, true); v.setUint16(34, 16, true);
+  ws(36, 'data'); v.setUint32(40, dataSize, true);
+  const chs = []; for (let c = 0; c < numCh; c++) chs.push(buffer.getChannelData(c)); let off = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < numCh; c++) { let s = Math.max(-1, Math.min(1, chs[c][i])); v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true); off += 2; }
+  return new Uint8Array(b);
+}
+function encodeMp3(buffer) {
+  const numCh = Math.min(2, buffer.numberOfChannels), sr = buffer.sampleRate, enc = new lamejs.Mp3Encoder(numCh, sr, 192);
+  const L = f2i(buffer.getChannelData(0)), R = numCh > 1 ? f2i(buffer.getChannelData(1)) : null, bs = 1152, data = [];
+  for (let i = 0; i < L.length; i += bs) { const l = L.subarray(i, i + bs); const chunk = numCh > 1 ? enc.encodeBuffer(l, R.subarray(i, i + bs)) : enc.encodeBuffer(l); if (chunk.length) data.push(chunk); }
+  const end = enc.flush(); if (end.length) data.push(end);
+  let total = 0; data.forEach((d) => (total += d.length)); const out = new Uint8Array(total); let o = 0; data.forEach((d) => { out.set(d, o); o += d.length; });
+  return out;
+}
+function f2i(fa) { const o = new Int16Array(fa.length); for (let i = 0; i < fa.length; i++) { const s = Math.max(-1, Math.min(1, fa[i])); o[i] = s < 0 ? s * 0x8000 : s * 0x7FFF; } return o; }
+
+// ===========================================================================
+// Test tone
+// ===========================================================================
+async function testOutput() {
+  const c = ctx(); await applyOutput(); const t = c.currentTime;
+  [523.25, 659.25, 783.99].forEach((freq, i) => {
+    const o = c.createOscillator(), g = c.createGain(); o.type = 'sine'; o.frequency.value = freq; const s = t + i * 0.14;
+    g.gain.setValueAtTime(0.0001, s); g.gain.exponentialRampToValueAtTime(0.22, s + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, s + 0.34);
+    o.connect(g); g.connect(c.destination); o.start(s); o.stop(s + 0.36);
+  });
+  showToast('Test tone sent to output');
+}
+
+// ===========================================================================
+// Pointer: seek
+// ===========================================================================
+function xToSeconds(clientX) { const r = el.timeline.getBoundingClientRect(); return Math.max(0, (clientX - r.left) / PPS); }
+let seeking = false;
+function timelineDown(e) {
+  if (e.target.closest('.clip')) return;
+  seeking = true; seek(xToSeconds(e.clientX), true);
+  window.addEventListener('pointermove', timelineMove); window.addEventListener('pointerup', timelineUp);
+}
+function timelineMove(e) { if (seeking) seek(xToSeconds(e.clientX), true); }
+function timelineUp() { seeking = false; window.removeEventListener('pointermove', timelineMove); window.removeEventListener('pointerup', timelineUp); }
+
+// ===========================================================================
+// Toast
+// ===========================================================================
+let toastTimer = null;
+function showToast(msg) { el.toast.textContent = msg; el.toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove('show'), 1900); }
+
+// ===========================================================================
+// BPM control
+// ===========================================================================
+function setBpm(v) { state.bpm = Math.min(300, Math.max(30, Math.round(v))); el.bpmValue.textContent = state.bpm; }
+function holdRepeat(btn, dir) {
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); setBpm(state.bpm + dir); let speed = 300, kick, iv;
+    const step = () => { setBpm(state.bpm + dir); speed = Math.max(35, speed * 0.8); iv = setTimeout(step, speed); };
+    kick = setTimeout(step, 340);
+    const stop = () => { clearTimeout(kick); clearTimeout(iv); window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop); };
+    window.addEventListener('pointerup', stop); window.addEventListener('pointercancel', stop);
+  });
+}
+function initBpmDrag() {
+  el.bpmValue.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); const y0 = e.clientY, b0 = state.bpm;
+    const move = (ev) => setBpm(b0 + Math.round((y0 - ev.clientY) / 3));
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  });
+}
+
+// ===========================================================================
+// Tooltips
+// ===========================================================================
+let tipTimer = null;
+function showTip(node) {
+  const title = node.getAttribute('data-title') || '', body = node.getAttribute('data-tip') || '';
+  if (!title && !body) return;
+  const tip = el.tooltip;
+  tip.innerHTML = (title ? `<div class="tt-title">${title}</div>` : '') + (body ? `<div class="tt-body">${body}</div>` : '');
+  tip.classList.add('show');
+  const r = node.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = r.left + r.width / 2 - tw / 2; left = Math.max(6, Math.min(left, window.innerWidth - tw - 6));
+  let top = r.bottom + 8; if (top + th > window.innerHeight - 6) top = r.top - th - 8;
+  tip.style.left = left + 'px'; tip.style.top = top + 'px'; tip.style.setProperty('--arrow', (r.left + r.width / 2 - left - 5) + 'px');
+}
+function hideTip() { el.tooltip.classList.remove('show'); }
+document.addEventListener('pointerover', (e) => { const n = e.target.closest('[data-tip],[data-title]'); if (!n) return; clearTimeout(tipTimer); tipTimer = setTimeout(() => showTip(n), 350); });
+document.addEventListener('pointerout', (e) => { if (e.target.closest('[data-tip],[data-title]')) { clearTimeout(tipTimer); hideTip(); } });
+document.addEventListener('pointerdown', (e) => { clearTimeout(tipTimer); hideTip(); if (!e.target.closest('#ctxMenu')) hideCtx(); });
+
+// ===========================================================================
+// Wiring
+// ===========================================================================
+el.metroBtn.onclick = () => { if (state.metroRunning) { stopMetronome(); el.metroBtn.classList.remove('active'); } else { el.metroBtn.classList.add('active'); startMetronome(0, null); } };
+el.recordBtn.onclick = () => { if (state.recording) stopRecording(); else beginRecording(state.editMode); };
+el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs from the playhead' : 'Edit mode off'); };
+el.playPauseBtn.onclick = () => { state.playing ? pausePlayback() : startPlayback(); };
+el.stopBtn.onclick = () => { if (state.recording) stopRecording(); else { pausePlayback(); seek(0, false); } };
+el.takesBtn.onclick = () => toggleTakesWindow();
+el.tpHeader.onclick = () => toggleTakesWindow();
+el.testBtn.onclick = testOutput;
+el.addTrackBtn.onclick = () => { addTrack(); showToast('Track added'); };
+el.loadBackingBtn.onclick = loadIntoSelected;
+el.settingsBtn.onclick = () => { el.settingsPanel.classList.toggle('hidden'); el.settingsBtn.classList.toggle('active'); };
+el.refreshDevices.onclick = listDevices;
+el.inputDevice.onchange = () => (state.inputDeviceId = el.inputDevice.value);
+el.outputDevice.onchange = () => { state.outputDeviceId = el.outputDevice.value; applyOutput(); };
+el.monitorToggle.onchange = () => { state.monitor = el.monitorToggle.checked; if (state.monitorGain) state.monitorGain.gain.value = state.monitor ? 1 : 0; };
+el.backingVol.oninput = () => { if (state.tracksGain) state.tracksGain.gain.value = parseFloat(el.backingVol.value); };
+
+holdRepeat(el.bpmUp, +1); holdRepeat(el.bpmDown, -1); initBpmDrag();
+
+el.rulerCanvas.addEventListener('pointerdown', timelineDown);
+el.timelineScroll.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(PPS * Math.exp(-e.deltaY * 0.002), e.clientX); } }, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.repeat) return;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    state.playing ? pausePlayback() : startPlayback();
+  } else if (e.code === 'KeyR') {
+    e.preventDefault();
+    if (state.recording) stopRecording(); else beginRecording(state.editMode);
+  }
+});
+
+// Init
+setBpm(100); updatePlayIcon();
+addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id; // start with two tracks, first selected
+buildTracksDOM(); layout(); renderTakesWindow(); listDevices();
+navigator.mediaDevices.addEventListener('devicechange', listDevices);
+window.addEventListener('resize', renderTakesWindow);
+setTimeout(() => el.splash && el.splash.classList.add('hide'), 1150);
