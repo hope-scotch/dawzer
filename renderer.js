@@ -482,18 +482,19 @@ async function beginRecording(editing) {
   try { await openInput(); } catch (e) { console.error(e); showToast('Cannot open input device'); return; }
 
   state.recording = true; state.editing = editing; state.recTrackId = tr.id;
-  state.recStartHead = state.playhead; state.livePeaks = [];
+  state.recStartHead = state.playhead; state.livePeaks = []; state.recEl = null;
   el.recordBtn.classList.add('armed');
   tr.els.clip.classList.add('hidden');
-  const recEl = document.createElement('div'); recEl.className = 'clip rec-temp recording';
-  const canvas = document.createElement('canvas'); recEl.appendChild(canvas); tr.els.body.appendChild(recEl);
-  state.recEl = { recEl, canvas };
   const countInBars = parseInt(el.countIn.value, 10) || 0;
   showToast(countInBars ? 'Counting in…' : `Recording into ${tr.name}…`);
   const onDown = (downCtxTime) => {
     const delay = Math.max(0, (downCtxTime - state.ctx.currentTime) * 1000);
     setTimeout(() => {
       if (!state.recording) return;
+      // Create the live recording clip only now (not during the count-in).
+      const recEl = document.createElement('div'); recEl.className = 'clip rec-temp recording';
+      const canvas = document.createElement('canvas'); recEl.appendChild(canvas); tr.els.body.appendChild(recEl);
+      state.recEl = { recEl, canvas };
       state.recChunks = [];
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
       state.recorder = new MediaRecorder(state.inputStream, { mimeType: mime });
