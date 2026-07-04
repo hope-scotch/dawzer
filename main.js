@@ -4,6 +4,7 @@ const fs = require('fs');
 
 let mainWindow;
 let forceClose = false;
+let pendingOpenPath = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -24,6 +25,11 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
   mainWindow.setMenuBarVisibility(false);
+
+  // If launched by double-clicking a .dz, open it once the UI is ready.
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingOpenPath) { readAndSendProject(pendingOpenPath); pendingOpenPath = null; }
+  });
 
   // Ask the renderer before actually closing (for unsaved-changes warning).
   mainWindow.on('close', (e) => {
@@ -49,12 +55,34 @@ ipcMain.handle('confirm-unsaved', async () => {
   return response; // 0 = Save, 1 = Don't Save, 2 = Cancel
 });
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+function readAndSendProject(p) {
+  try { const data = fs.readFileSync(p); if (mainWindow) mainWindow.webContents.send('open-project-file', { name: path.basename(p), data: data.buffer }); }
+  catch (e) { console.error('open path', e); }
+}
+function openPath(p) {
+  if (!p) return;
+  if (mainWindow && !mainWindow.webContents.isLoading()) readAndSendProject(p);
+  else pendingOpenPath = p;
+}
+// macOS: double-clicking a .dz sends an open-file event.
+app.on('open-file', (e, p) => { e.preventDefault(); openPath(p); });
+// Windows/Linux: the file arrives as a launch argument.
+{ const a = process.argv.find((x) => x && x.toLowerCase().endsWith('.dz')); if (a) pendingOpenPath = a; }
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, argv) => {
+    if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
+    const p = argv.find((x) => x && x.toLowerCase().endsWith('.dz'));
+    if (p) openPath(p);
   });
-});
+  app.whenReady().then(() => {
+    createWindow();
+    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

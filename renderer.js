@@ -1010,6 +1010,18 @@ document.addEventListener('keydown', (e) => {
   else if ((e.code === 'Delete' || e.code === 'Backspace') && !state.recording) { e.preventDefault(); const tr = selectedTrack(); const tk = tr && activeTake(tr); if (tk) { removeTake(tr, tk.id); showToast('Take deleted'); } }
 });
 
+// Open a .dz that was double-clicked in the OS.
+ipcRenderer.on('open-project-file', async (e, { name, data }) => {
+  const c = await confirmDiscard(); if (c === 'cancel') return;
+  if (c === 'save') { await saveProject(); if (state.dirty) return; }
+  try {
+    const p = JSON.parse(new TextDecoder().decode(new Uint8Array(data)));
+    await loadProject(p);
+    state.projectName = name.replace(/\.dz$/i, ''); updateTitle(); clearDirty();
+    showToast('Project opened');
+  } catch (err) { console.error(err); showToast('Could not open project'); }
+});
+
 // Unsaved-changes guard on window close.
 ipcRenderer.on('app-close-request', async () => {
   const c = await confirmDiscard();

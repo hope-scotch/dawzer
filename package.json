@@ -21,6 +21,15 @@
     "directories": {
       "buildResources": "build"
     },
+    "fileAssociations": [
+      {
+        "ext": "dz",
+        "name": "Dawzer Project",
+        "description": "Dawzer Project",
+        "role": "Editor",
+        "icon": "build/icon"
+      }
+    ],
     "files": [
       "main.js",
       "index.html",
@@ -39,7 +48,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "build/icon.png",
+      "icon": "build/icon.icns",
       "category": "public.app-category.music"
     },
     "nsis": {
