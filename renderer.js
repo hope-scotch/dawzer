@@ -429,17 +429,28 @@ function layout() {
 function drawRuler(px) {
   const c = el.rulerCanvas, h = RULER_H; c.width = px; c.height = h;
   const g = c.getContext('2d'); g.fillStyle = '#1c2628'; g.fillRect(0, 0, px, h);
-  g.strokeStyle = '#46594f'; g.fillStyle = '#8fa596'; g.font = '10px sans-serif'; g.lineWidth = 1;
-  const secs = Math.ceil(px / PPS);
-  const labelEvery = PPS < 12 ? 30 : PPS < 20 ? 15 : PPS < 35 ? 10 : PPS < 55 ? 5 : PPS < 90 ? 2 : 1;
-  for (let s = 0; s <= secs; s++) {
-    const major = s % labelEvery === 0;
-    if (!major && PPS < 18) continue; // too dense to draw a tick every second
-    const x = Math.round(s * PPS) + 0.5;
-    g.beginPath(); g.moveTo(x, h - (major ? 15 : 7)); g.lineTo(x, h); g.stroke();
-    if (major) g.fillText(fmt(s), x + 3, 13);
+  g.font = "10px 'Lato', sans-serif"; g.lineWidth = 1;
+  const beats = bpb(), beatDur = 60 / state.bpm, barDur = beats * beatDur;
+  const barPx = barDur * PPS, beatPx = beatDur * PPS;
+  const totalBars = Math.ceil(px / barPx) + 1;
+  // minor beat ticks (only when there's room)
+  if (beatPx >= 9) {
+    g.strokeStyle = '#2f3b37';
+    for (let bar = 0; bar < totalBars; bar++) for (let b = 1; b < beats; b++) {
+      const x = Math.round((bar * beats + b) * beatPx) + 0.5;
+      g.beginPath(); g.moveTo(x, h - 6); g.lineTo(x, h); g.stroke();
+    }
+  }
+  // bar lines + numbers (thin labels out when zoomed far)
+  let every = 1; if (barPx < 26) every = Math.ceil(26 / barPx);
+  g.strokeStyle = '#4a5f57'; g.fillStyle = '#8fa596';
+  for (let bar = 0; bar <= totalBars; bar++) {
+    const x = Math.round(bar * barPx) + 0.5, labeled = bar % every === 0;
+    g.beginPath(); g.moveTo(x, h - (labeled ? 15 : 9)); g.lineTo(x, h); g.stroke();
+    if (labeled) g.fillText(String(bar + 1), x + 3, 13);
   }
 }
+function refreshRuler() { drawRuler(Math.ceil(contentDuration() * PPS)); }
 function renderPlayhead() { el.playhead.style.left = Math.round(state.playhead * PPS) + 'px'; el.clock.textContent = `${fmt(state.playhead, true)} / ${fmt(contentDuration(), true)}`; }
 function fmt(s, tenths) { if (!isFinite(s)) s = 0; const m = Math.floor(s / 60), sec = Math.floor(s % 60).toString().padStart(2, '0'); if (tenths) return `${m}:${sec}.${Math.floor((s * 10) % 10)}`; return `${m}:${sec}`; }
 function autoScroll() { const x = state.playhead * PPS, sc = el.timelineScroll; if (x < sc.scrollLeft + 40 || x > sc.scrollLeft + sc.clientWidth - 60) sc.scrollLeft = x - sc.clientWidth * 0.4; }
@@ -843,7 +854,7 @@ function styleRange(input) {
 // ===========================================================================
 // BPM control
 // ===========================================================================
-function setBpm(v) { state.bpm = Math.min(300, Math.max(30, Math.round(v))); el.bpmValue.textContent = state.bpm; }
+function setBpm(v) { state.bpm = Math.min(300, Math.max(30, Math.round(v))); el.bpmValue.textContent = state.bpm; refreshRuler(); }
 function holdRepeat(btn, dir) {
   btn.addEventListener('pointerdown', (e) => {
     e.preventDefault(); setBpm(state.bpm + dir); let speed = 300, kick, iv;
@@ -915,6 +926,7 @@ el.inputDevice.onchange = () => (state.inputDeviceId = el.inputDevice.value);
 el.outputDevice.onchange = () => { state.outputDeviceId = el.outputDevice.value; applyOutput(); };
 el.monitorToggle.onchange = () => { state.monitor = el.monitorToggle.checked; if (state.monitorGain) state.monitorGain.gain.value = state.monitor ? 1 : 0; };
 el.langSelect.onchange = () => { state.lang = el.langSelect.value; showToast(state.lang === 'bn' ? 'ভাষা: বাংলা' : 'Language: English'); };
+el.beatsPerBar.onchange = () => refreshRuler();
 styleRange(el.clickVol);
 
 holdRepeat(el.bpmUp, +1); holdRepeat(el.bpmDown, -1); initBpmDrag();
