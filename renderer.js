@@ -789,7 +789,7 @@ document.addEventListener('keydown', (e) => {
   if (mod && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
   if (mod) return;
   if (e.repeat) return;
-  if (e.code === 'Space') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); state.playing ? pausePlayback() : startPlayback(); }
+  if (e.code === 'Space') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); if (state.recording) stopRecording(); else state.playing ? pausePlayback() : startPlayback(); }
   else if (e.code === 'KeyR') { e.preventDefault(); if (state.recording) stopRecording(); else beginRecording(state.editMode); }
 });
 
