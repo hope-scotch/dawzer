@@ -229,7 +229,7 @@ function deleteTrack(id) {
   if (state.selectedTrackId === id) state.selectedTrackId = state.tracks.length ? state.tracks[state.tracks.length - 1].id : null;
   buildTracksDOM(); layout(); renderTakesWindow();
 }
-function selectTrack(id) { if (state.selectedTrackId !== id) { state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); } }
+function selectTrack(id) { if (state.recording) return; if (state.selectedTrackId !== id) { state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); } }
 function startRename(tr) {
   if (!tr.els) return;
   const title = tr.els.title;
@@ -698,7 +698,7 @@ async function testOutput() {
 function xToSeconds(clientX) { const r = el.timeline.getBoundingClientRect(); return Math.max(0, (clientX - r.left) / PPS); }
 let seeking = false;
 function timelineDown(e) {
-  if (e.target.closest('.clip')) return;
+  if (state.recording || e.target.closest('.clip')) return;
   seeking = true; seek(xToSeconds(e.clientX), true);
   window.addEventListener('pointermove', timelineMove); window.addEventListener('pointerup', timelineUp);
 }
