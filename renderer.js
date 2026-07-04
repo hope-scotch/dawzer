@@ -514,6 +514,14 @@ function click(time, accent, countin) {
   o.frequency.value = accent ? 1500 : 900;
   g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, v), time + 0.001); g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
   o.connect(g); g.connect(c.destination); o.start(time); o.stop(time + 0.06);
+  scheduleFlash(time, accent);
+}
+function scheduleFlash(time, accent) { const delay = Math.max(0, (time - state.ctx.currentTime) * 1000); setTimeout(() => pulseMetro(accent), delay); }
+function pulseMetro(accent) {
+  const b = el.metroBtn;
+  b.classList.remove('beat1', 'beat'); void b.offsetWidth;
+  b.classList.add(accent ? 'beat1' : 'beat');
+  clearTimeout(b._pt); b._pt = setTimeout(() => b.classList.remove('beat1', 'beat'), 210);
 }
 function scheduler() {
   const c = state.ctx;

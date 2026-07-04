@@ -69,6 +69,11 @@ body {
 .tbtn.rec .rec-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--record); box-shadow: 0 0 8px rgba(224,106,95,.6); }
 .tbtn.rec.armed { animation: pulse 1s infinite; border-color: var(--record); }
 .tbtn.editon { border-color: var(--accent); background: linear-gradient(180deg, #2f4d3d, #284433); color: #cfe6b8; }
+/* metronome beat blink — bright on beat 1, subtler on other beats */
+.tbtn.beat1 { animation: mBeat1 210ms ease-out; }
+.tbtn.beat { animation: mBeat 210ms ease-out; }
+@keyframes mBeat1 { from { background: var(--accent); border-color: var(--accent); color: #17251b; box-shadow: 0 0 14px rgba(156,176,128,.65); } to {} }
+@keyframes mBeat { from { background: #40614f; border-color: #6a8a72; } to {} }
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(224,106,95,.5);} 50% { box-shadow: 0 0 0 8px rgba(224,106,95,0);} }
 
 /* Unified metronome fields */
