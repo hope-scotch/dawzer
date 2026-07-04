@@ -441,14 +441,18 @@ function drawRuler(px) {
       g.beginPath(); g.moveTo(x, h - 6); g.lineTo(x, h); g.stroke();
     }
   }
-  // bar lines + numbers (thin labels out when zoomed far)
+  // bar lines + numbers (centered on the line; thin labels out when zoomed far)
   let every = 1; if (barPx < 26) every = Math.ceil(26 / barPx);
-  g.strokeStyle = '#4a5f57'; g.fillStyle = '#8fa596';
+  g.strokeStyle = '#4a5f57'; g.fillStyle = '#8fa596'; g.textBaseline = 'middle';
   for (let bar = 0; bar <= totalBars; bar++) {
     const x = Math.round(bar * barPx) + 0.5, labeled = bar % every === 0;
     g.beginPath(); g.moveTo(x, h - (labeled ? 15 : 9)); g.lineTo(x, h); g.stroke();
-    if (labeled) g.fillText(String(bar + 1), x + 3, 13);
+    if (labeled) {
+      if (bar === 0) { g.textAlign = 'left'; g.fillText('1', x + 4, 9); }
+      else { g.textAlign = 'center'; g.fillText(String(bar + 1), x, 9); }
+    }
   }
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
 }
 function refreshRuler() { drawRuler(Math.ceil(contentDuration() * PPS)); }
 function renderPlayhead() { el.playhead.style.left = Math.round(state.playhead * PPS) + 'px'; el.clock.textContent = `${fmt(state.playhead, true)} / ${fmt(contentDuration(), true)}`; }
