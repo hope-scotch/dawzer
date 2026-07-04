@@ -58,28 +58,21 @@
             <select id="countIn"><option value="0">Off</option><option value="1" selected>1 bar</option><option value="2">2 bars</option></select>
           </div>
         </div>
-        <div class="mfield click" data-title="Click Volume" data-tip="মেট্রোনোম ক্লিকের শব্দের মাত্রা।">
-          <span class="chip-label">Click</span>
-          <div class="mbody"><input type="range" id="clickVol" class="slider" min="0" max="1" step="0.01" value="0.7" /></div>
-        </div>
       </div>
 
       <div class="tgroup right">
         <div id="clock" class="clock" data-title="Timeline" data-tip="প্লেহেডের বর্তমান অবস্থান / মোট দৈর্ঘ্য।">0:00.0 / 0:00.0</div>
         <button id="projectBtn" class="tbtn" data-title="Project" data-tip="নতুন / খুলুন / সেভ করুন।">
-          <svg viewBox="0 0 24 24" class="icn"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6z"/><path d="M14 3v6h6"/></svg>
+          <svg viewBox="0 0 24 24" class="icn"><path d="M4 5h5l2 3h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
         </button>
-        <button id="takesBtn" class="tbtn" data-title="Takes" data-tip="নির্বাচিত ট্র্যাকের সব টেকের তালিকা খুলুন বা বন্ধ করুন।">
+        <button id="takesBtn" class="tbtn" data-title="Takes" data-tip="নির্বাচিত ট্র্যাকের সব টেকের তালিকা খুলুন বা বন্ধ করুন। (T)">
           <svg viewBox="0 0 24 24" class="icn"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-        </button>
-        <button id="testBtn" class="tbtn" data-title="Test Output" data-tip="নির্বাচিত আউটপুট ডিভাইসে একটি টোন বাজিয়ে পরীক্ষা করুন।">
-          <svg viewBox="0 0 24 24" class="icn"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
         </button>
         <button id="addTrackBtn" class="tbtn" data-title="Add Track" data-tip="একটি নতুন খালি ট্র্যাক যোগ করুন।">
           <svg viewBox="0 0 24 24" class="icn"><path d="M12 5v14M5 12h14"/></svg>
         </button>
-        <button id="loadBackingBtn" class="tbtn" data-title="Load Track" data-tip="ফাইল থেকে অডিও নিয়ে নির্বাচিত ট্র্যাকে যোগ করুন।">
-          <svg viewBox="0 0 24 24" class="icn"><path d="M4 5h5l2 3h9v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg>
+        <button id="loadBackingBtn" class="tbtn" data-title="Load Track" data-tip="ফাইল থেকে অডিও আপলোড করে নির্বাচিত ট্র্যাকে যোগ করুন।">
+          <svg viewBox="0 0 24 24" class="icn"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M12 15V3"/><path d="M8 7l4-4 4 4"/></svg>
         </button>
         <button id="settingsBtn" class="tbtn" data-title="Audio Setup" data-tip="ইনপুট ও আউটপুট ডিভাইস নির্বাচন করুন।">
           <svg viewBox="0 0 24 24" class="icn"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -135,8 +128,12 @@
       <div class="modal-body">
         <div class="set-row"><label>Input (record from)</label><select id="inputDevice"></select></div>
         <div class="set-row"><label>Output (listen through)</label><select id="outputDevice"></select></div>
+        <div class="set-row"><label>Output test</label>
+          <div class="inline"><button id="testBtn" class="ghost" data-title="Test Output" data-tip="নির্বাচিত আউটপুট ডিভাইসে টোন বাজিয়ে পরীক্ষা করুন।">
+            <svg viewBox="0 0 24 24" class="icn sm"><path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>Play test tone</button></div></div>
         <div class="set-row"><label>Monitor input</label>
           <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
+        <div class="set-row"><label>Click volume</label><input type="range" id="clickVol" class="slider" min="0" max="1" step="0.01" value="0.7" /></div>
         <div class="set-row"><label>Language</label>
           <select id="langSelect"><option value="en">English</option><option value="bn">বাংলা (Bengali)</option></select></div>
         <div class="set-row"><button id="refreshDevices" class="ghost">

@@ -150,8 +150,8 @@ body {
 .take-item { display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 11px; padding: 9px 12px; cursor: pointer; transition: border-color 130ms, background 130ms; }
 .take-item:hover { border-color: #5b7a63; }
 .take-item.current { border-color: var(--good); background: #2c3c30; }
-.take-num { font-size: 14px; font-weight: 700; color: var(--muted); text-align: center; }
-.take-item.current .take-num { color: var(--good); }
+.take-num { font-size: 13px; font-weight: 800; color: var(--text); text-align: center; font-family: var(--font-display); background: var(--field-2); border: 1px solid var(--border); border-radius: 7px; padding: 5px 0; }
+.take-item.current .take-num { color: #16210f; background: var(--good); border-color: var(--good); }
 .take-mini { width: 100%; }
 .take-mini canvas { display: block; width: 100%; height: 36px; }
 .take-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
@@ -215,6 +215,12 @@ body {
 .clip .trim::after { content: ""; width: 3px; height: 34%; border-radius: 2px; background: rgba(255,255,255,.55); opacity: 0; transition: opacity 120ms; }
 .clip:hover .trim::after { opacity: .8; }
 .clip.recording { background: #3a2b2b !important; border-color: var(--record) !important; }
+.clip-label {
+  position: absolute; top: 0; left: 0; z-index: 4; max-width: calc(100% - 4px);
+  font-size: 10px; font-weight: 800; font-family: var(--font-display); letter-spacing: .2px;
+  color: #16210f; background: var(--tc, #9cb080); padding: 1px 7px 2px; border-radius: 7px 0 7px 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+}
 
 /* ---------- Floating takes window ---------- */
 .takes-window {
