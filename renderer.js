@@ -1004,6 +1004,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTakesWindow(); }
   else if (e.code === 'KeyM') { e.preventDefault(); const tr = selectedTrack(); if (tr) setMute(tr, !tr.muted); }
   else if (e.code === 'KeyS') { e.preventDefault(); const tr = selectedTrack(); if (tr) setSolo(tr, !tr.soloed); }
+  else if ((e.code === 'Delete' || e.code === 'Backspace') && !state.recording) { e.preventDefault(); const tr = selectedTrack(); const tk = tr && activeTake(tr); if (tk) { removeTake(tr, tk.id); showToast('Take deleted'); } }
 });
 
 // Unsaved-changes guard on window close.
