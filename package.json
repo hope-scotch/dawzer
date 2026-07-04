@@ -28,6 +28,7 @@
       "renderer.js",
       "lamejs.min.js",
       "logo.png",
+      "logo-solo.png",
       "fonts/**",
       "build/icon.png"
     ],

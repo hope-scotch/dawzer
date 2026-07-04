@@ -804,8 +804,8 @@ async function confirmDiscard() {
 async function saveProject() {
   showToast('Saving…');
   const bytes = new TextEncoder().encode(JSON.stringify(serializeProject()));
-  const res = await ipcRenderer.invoke('save-project', { defaultName: (state.projectName || 'Untitled') + '.dawzer', data: bytes });
-  if (res.ok) { state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); clearDirty(); showToast('Project saved'); }
+  const res = await ipcRenderer.invoke('save-project', { defaultName: (state.projectName || 'Untitled') + '.dz', data: bytes });
+  if (res.ok) { state.projectName = res.name.replace(/\.dz$/i, ''); updateTitle(); clearDirty(); showToast('Project saved'); }
   else showToast('Save cancelled');
 }
 async function openProject() {
@@ -816,7 +816,7 @@ async function openProject() {
   try {
     const p = JSON.parse(new TextDecoder().decode(new Uint8Array(res.data)));
     await loadProject(p);
-    state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); clearDirty();
+    state.projectName = res.name.replace(/\.dz$/i, ''); updateTitle(); clearDirty();
     showToast('Project opened');
   } catch (e) { console.error(e); showToast('Could not open project'); }
 }

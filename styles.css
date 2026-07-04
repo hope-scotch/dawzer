@@ -189,7 +189,7 @@ body {
 }
 .brand-word { font-weight: 700; font-size: 18px; letter-spacing: 1.5px; color: #dfeacf; }
 .brand-img { height: 27px; display: block; }
-.splash-img { height: 76px; display: block; filter: drop-shadow(0 3px 10px rgba(0,0,0,.45)); }
+.splash-img { height: 118px; display: block; filter: drop-shadow(0 4px 14px rgba(0,0,0,.5)); }
 
 /* ---------- Loading splash ---------- */
 .splash {

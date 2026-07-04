@@ -84,25 +84,33 @@ ipcMain.handle('open-audio', async () => {
   return { ok: true, filePath, name: path.basename(filePath), data: data.buffer };
 });
 
-// Save a project file (.dawzer) — audio + arrangement bundled together.
+// Base library folder, GarageBand-style: Documents/Dawzer, with a subfolder per day.
+function dawzerDir(withDate) {
+  const base = path.join(app.getPath('documents'), 'Dawzer');
+  const dir = withDate ? path.join(base, new Date().toISOString().slice(0, 10)) : base;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  return dir;
+}
+
+// Save a project file (.dz) — audio + arrangement bundled together.
 ipcMain.handle('save-project', async (event, { defaultName, data }) => {
-  const docs = app.getPath('documents');
   const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
     title: 'Save project',
-    defaultPath: path.join(docs, defaultName || 'Untitled.dawzer'),
-    filters: [{ name: 'Dawzer Project', extensions: ['dawzer'] }]
+    defaultPath: path.join(dawzerDir(true), defaultName || 'Untitled.dz'),
+    filters: [{ name: 'Dawzer Project', extensions: ['dz'] }]
   });
   if (canceled || !filePath) return { ok: false };
   fs.writeFileSync(filePath, Buffer.from(data));
   return { ok: true, filePath, name: path.basename(filePath) };
 });
 
-// Open a project file (.dawzer).
+// Open a project file (.dz).
 ipcMain.handle('open-project', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     title: 'Open project',
+    defaultPath: dawzerDir(false),
     properties: ['openFile'],
-    filters: [{ name: 'Dawzer Project', extensions: ['dawzer'] }]
+    filters: [{ name: 'Dawzer Project', extensions: ['dz'] }]
   });
   if (canceled || !filePaths.length) return { ok: false };
   const data = fs.readFileSync(filePaths[0]);
