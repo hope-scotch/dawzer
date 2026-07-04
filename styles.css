@@ -1,8 +1,14 @@
 @font-face { font-family: 'Poppins'; src: url('fonts/Poppins-Regular.ttf'); font-weight: 400; font-display: swap; }
 @font-face { font-family: 'Poppins'; src: url('fonts/Poppins-Medium.ttf'); font-weight: 500; font-display: swap; }
 @font-face { font-family: 'Poppins'; src: url('fonts/Poppins-Bold.ttf'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Lato'; src: url('fonts/Lato-Regular.ttf'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Lato'; src: url('fonts/Lato-Medium.ttf'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Lato'; src: url('fonts/Lato-Semibold.ttf'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Lato'; src: url('fonts/Lato-Bold.ttf'); font-weight: 700; font-display: swap; }
 
 :root {
+  --font-ui: 'Lato', -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Poppins', var(--font-ui);
   /* Palette derived from: 273338 · 2B5748 · 618764 · 9CB080 */
   --bg: #222d30;
   --panel: #273338;
@@ -28,7 +34,8 @@
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility;
   -webkit-user-select: none; user-select: none; overflow: hidden;
 }
 .app { display: flex; flex-direction: column; height: 100vh; }
@@ -285,6 +292,18 @@ input[type="range"].slider::-webkit-slider-thumb { -webkit-appearance: none; wid
   border-radius: 50%; background: #eef2ea; border: 2px solid var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.45); transition: transform 90ms; }
 input[type="range"].slider:hover::-webkit-slider-thumb { transform: scale(1.14); }
 input[type="range"].slider:active::-webkit-slider-thumb { transform: scale(1.06); border-color: var(--accent-2); }
+
+/* ---------- Premium typography & polish ---------- */
+.modal-title, .tp-header, .takes-head, .tooltip .tt-title { font-family: var(--font-display); }
+.bpm-num, .clock { font-family: var(--font-display); font-weight: 700; letter-spacing: .4px; }
+.lane-label .ll-title { font-family: var(--font-display); font-weight: 600; }
+.chip-label { font-weight: 700 !important; letter-spacing: .9px !important; }
+.set-row label, .ll-sub, .take-meta, .tp-track, .hint, .empty-note { letter-spacing: .2px; }
+.tw-title, .modal-title { letter-spacing: .2px; }
+/* soft ambient depth behind the workspace */
+.app { background: radial-gradient(1100px 640px at 16% -22%, #26352f 0%, transparent 58%); }
+.transport { border-bottom-color: #2d3b3d; }
+.lane-label.track .ll-title { font-size: 13px; }
 
 /* per-track volume slider in the label */
 .track-vol { width: 100%; margin-top: 6px !important; }
