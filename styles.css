@@ -175,6 +175,8 @@ body {
   display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow);
 }
 .brand-word { font-weight: 700; font-size: 18px; letter-spacing: 1.5px; color: #dfeacf; }
+.brand-img { height: 27px; display: block; }
+.splash-img { height: 76px; display: block; filter: drop-shadow(0 3px 10px rgba(0,0,0,.45)); }
 
 /* ---------- Loading splash ---------- */
 .splash {
@@ -242,3 +244,13 @@ body {
 
 /* brand at top-left of the transport */
 .transport > .brand { margin-right: 10px; }
+
+/* pointer cursor on timeline (was text) */
+.ruler { cursor: pointer; }
+.lane-body.track { cursor: pointer; }
+.clip { cursor: grab; }
+.clip.selected { box-shadow: 0 0 0 2px #eef2ea, 0 0 0 5px color-mix(in srgb, var(--tc,#9cb080) 55%, transparent); }
+
+/* Add-track row under the last track */
+.add-track-row { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; border: none; border-top: 1px dashed var(--border); color: var(--muted); cursor: pointer; padding: 11px 12px; font-size: 12px; font-weight: 600; }
+.add-track-row:hover { color: var(--text); background: var(--panel-2); }

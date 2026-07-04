@@ -8,7 +8,7 @@
 <body>
   <div id="splash" class="splash">
     <div class="splash-logo">
-      <span class="brand-badge">D</span><span class="brand-word">AWZER</span>
+      <img src="logo.png" class="splash-img" alt="Dawzer" />
     </div>
   </div>
 
@@ -16,7 +16,7 @@
     <!-- ===================== TRANSPORT BAR ===================== -->
     <header class="transport">
       <div class="brand" data-title="Dawzer" data-tip="সহজ রেকর্ডিং স্টুডিও — মেট্রোনোমের সাথে টেক রেকর্ড করুন।">
-        <span class="brand-badge">D</span><span class="brand-word">AWZER</span>
+        <img src="logo.png" class="brand-img" alt="Dawzer" />
       </div>
       <div class="tgroup">
         <button id="metroBtn" class="tbtn" data-title="Metronome" data-tip="ক্লিক ট্র্যাক চালু বা বন্ধ করুন।">
@@ -90,6 +90,8 @@
       <div class="set-row"><label>Output (listen through)</label><select id="outputDevice"></select></div>
       <div class="set-row"><label>Monitor input</label>
         <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
+      <div class="set-row"><label>Language</label>
+        <select id="langSelect"><option value="en">English</option><option value="bn">বাংলা (Bengali)</option></select></div>
       <div class="set-row"><label>Tracks volume</label><input type="range" id="backingVol" min="0" max="1" step="0.01" value="0.85" /></div>
       <div class="set-row"><label>Take volume</label><input type="range" id="takeVol" min="0" max="1" step="0.01" value="1" /></div>
       <div class="set-row"><button id="refreshDevices" class="ghost">
@@ -106,6 +108,9 @@
           </span>
         </div>
         <div id="trackLabels"></div>
+        <button id="addTrackRow" class="add-track-row" data-title="Add Track" data-tip="নতুন খালি ট্র্যাক যোগ করুন।">
+          <svg viewBox="0 0 24 24" class="icn sm"><path d="M12 5v14M5 12h14"/></svg><span>Add track</span>
+        </button>
       </div>
 
       <div class="timeline-scroll" id="timelineScroll">

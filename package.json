@@ -27,6 +27,7 @@
       "styles.css",
       "renderer.js",
       "lamejs.min.js",
+      "logo.png",
       "fonts/**",
       "build/icon.png"
     ],

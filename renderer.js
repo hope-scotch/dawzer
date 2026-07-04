@@ -17,10 +17,37 @@ const ICON_PLAY = '<svg viewBox="0 0 24 24" class="icn"><polygon points="7,4 20,
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" class="icn"><rect x="7" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/></svg>';
 const SVG_TRASH = '<svg viewBox="0 0 24 24" class="icn xs"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>';
 
+// English tooltip bodies, keyed by the element's data-title. (data-tip holds Bengali.)
+const EN_BODY = {
+  'Metronome': 'Toggle the click track on or off.',
+  'Record': 'Record a clip into the selected track (R). Edit mode overdubs from the playhead.',
+  'Edit Mode': 'When on, Record overdubs the clip under the playhead instead of adding a new one.',
+  'Play / Pause': 'Play or pause from the playhead. Spacebar also works.',
+  'Stop': 'Stop recording or playback and return to the start.',
+  'Tempo (BPM)': 'Hold the arrows, or drag the number up and down, to change the tempo.',
+  'Beats per Bar': 'How many beats in each bar; beat 1 is accented.',
+  'Count-in': 'Metronome bars before recording begins.',
+  'Click Volume': 'Metronome click volume.',
+  'Timeline': 'Playhead position / total length.',
+  'Takes': "Show the selected track's recordings.",
+  'Test Output': 'Play a tone through the selected output device.',
+  'Add Track': 'Add a new empty track.',
+  'Load Track': 'Load an audio file into the selected track.',
+  'Audio Setup': 'Choose input & output devices and the language.',
+  'Zoom': 'Zoom the timeline: Ctrl + scroll, or pinch on a trackpad.',
+  'Audio Clip': 'Drag the middle to move; drag the edges to resize. Right-click for options.',
+  'Take': 'Click to jump to this recording on the timeline.',
+  'Export WAV': 'Save as a lossless WAV file.',
+  'Export MP3': 'Save as a 192 kbps MP3 file.',
+  'Delete': 'Delete this recording.',
+  'Dawzer': 'A simple recording studio — record takes over a metronome.',
+};
+
 const state = {
   ctx: null, inputStream: null,
   inputDeviceId: 'default', outputDeviceId: 'default',
   monitor: false, monitorSource: null, monitorGain: null, tracksGain: null,
+  lang: 'en',
 
   bpm: 100, editMode: false,
   playhead: 0, playing: false, playStartCtx: 0, playStartHead: 0, raf: null,
@@ -28,9 +55,10 @@ const state = {
   metroRunning: false, nextNoteTime: 0, beatCounter: 0, countInLeft: 0, timerId: null, onDownbeat: null,
 
   recording: false, editing: false, recorder: null, recChunks: [],
-  analyser: null, liveBuf: null, livePeaks: [], recStartHead: 0, recStartCtx: 0, recRaf: null, recTrackId: null,
+  analyser: null, liveBuf: null, livePeaks: [], recStartHead: 0, recStartCtx: 0, recRaf: null, recTrackId: null, recEl: null,
 
   tracks: [], trackSeq: 0, selectedTrackId: null, playSources: [],
+  undoStack: [], redoStack: [],
 };
 let idCounter = 0;
 
@@ -43,8 +71,8 @@ const el = {};
   'metroBtn','recordBtn','editBtn','playPauseBtn','stopBtn',
   'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
   'clock','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
-  'settingsPanel','inputDevice','outputDevice','monitorToggle','backingVol','refreshDevices','deviceStatus',
-  'labels','trackLabels','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
+  'settingsPanel','inputDevice','outputDevice','monitorToggle','backingVol','langSelect','refreshDevices','deviceStatus',
+  'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
   'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
 ].forEach((id) => (el[id] = $(id)));
 
@@ -151,44 +179,71 @@ function drawMini(canvas, peaks, color) {
 }
 
 // ===========================================================================
-// Track / take model
+// Undo / Redo
+// ===========================================================================
+function snap() {
+  return {
+    trackSeq: state.trackSeq, selectedTrackId: state.selectedTrackId,
+    tracks: state.tracks.map((tr) => ({
+      id: tr.id, name: tr.name, color: tr.color, clipSeq: tr.clipSeq, selectedClipId: tr.selectedClipId,
+      clips: tr.clips.map((c) => ({ id: c.id, num: c.num, offset: c.offset, trimStart: c.trimStart, trimEnd: c.trimEnd, createdAt: c.createdAt, buffer: c.buffer })),
+    })),
+  };
+}
+function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length > 80) state.undoStack.shift(); state.redoStack = []; }
+function restore(s) {
+  state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
+  state.tracks = s.tracks.map((t) => ({
+    id: t.id, name: t.name, color: t.color, clipSeq: t.clipSeq, selectedClipId: t.selectedClipId, els: null,
+    clips: t.clips.map((c) => ({ id: c.id, num: c.num, offset: c.offset, trimStart: c.trimStart, trimEnd: c.trimEnd, createdAt: c.createdAt, buffer: c.buffer, peaks: null, els: null })),
+  }));
+  buildTracksDOM(); layout(); renderTakesWindow();
+}
+function undo() { if (!state.undoStack.length) { showToast('Nothing to undo'); return; } state.redoStack.push(snap()); restore(state.undoStack.pop()); showToast('Undo'); }
+function redo() { if (!state.redoStack.length) { showToast('Nothing to redo'); return; } state.undoStack.push(snap()); restore(state.redoStack.pop()); showToast('Redo'); }
+
+// ===========================================================================
+// Track / clip model
 // ===========================================================================
 function selectedTrack() { return state.tracks.find((t) => t.id === state.selectedTrackId) || null; }
 function trackById(id) { return state.tracks.find((t) => t.id === id) || null; }
-function activeTake(tr) { return tr ? (tr.takes.find((t) => t.id === tr.activeTakeId) || null) : null; }
-function visDur(tk) { return tk.trimEnd - tk.trimStart; }
+function visDur(c) { return c.trimEnd - c.trimStart; }
+function clipEnd(c) { return c.offset + visDur(c); }
 
 function addTrack(silent) {
   state.trackSeq++;
-  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], activeTakeId: null, takeSeq: 0, els: null };
+  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], clips: [], clipSeq: 0, selectedClipId: null, els: null };
   state.tracks.push(tr);
   state.selectedTrackId = tr.id;
   buildTracksDOM();
-  if (!silent) layout();
-  renderTakesWindow();
+  if (!silent) { layout(); renderTakesWindow(); }
   return tr;
 }
+function userAddTrack() { pushUndo(); addTrack(false); showToast('Track added'); }
 function deleteTrack(id) {
+  pushUndo();
   state.tracks = state.tracks.filter((t) => t.id !== id);
   if (state.selectedTrackId === id) state.selectedTrackId = state.tracks.length ? state.tracks[state.tracks.length - 1].id : null;
   buildTracksDOM(); layout(); renderTakesWindow();
 }
-function selectTrack(id) { if (state.selectedTrackId === id) return; state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); }
-function addTake(tr, buffer, offset, label) {
-  tr.takeSeq++;
-  const tk = { id: ++idCounter, num: tr.takeSeq, buffer, peaks: null, createdAt: new Date(), offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, label: label || `Take ${tr.takeSeq}` };
-  tr.takes.push(tk); tr.activeTakeId = tk.id;
-  return tk;
+function selectTrack(id) { if (state.selectedTrackId !== id) { state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); } }
+function selectClip(tr, clipId) { state.selectedTrackId = tr.id; tr.selectedClipId = clipId; updateSelectionUI(); renderTakesWindow(); }
+function addClip(tr, buffer, offset) {
+  tr.clipSeq++;
+  const c = { id: ++idCounter, num: tr.clipSeq, offset: Math.max(0, offset || 0), buffer, peaks: null, trimStart: 0, trimEnd: buffer.duration, createdAt: new Date(), els: null };
+  tr.clips.push(c); tr.selectedClipId = c.id;
+  return c;
 }
-function setActiveTake(tr, takeId) { tr.activeTakeId = takeId; renderTrack(tr); renderTakesWindow(); layout(); }
-function removeTake(tr, takeId) {
-  tr.takes = tr.takes.filter((t) => t.id !== takeId);
-  if (tr.activeTakeId === takeId) tr.activeTakeId = tr.takes.length ? tr.takes[tr.takes.length - 1].id : null;
-  renderTrack(tr); renderTakesWindow(); layout();
+function removeClip(tr, clipId) {
+  pushUndo();
+  tr.clips = tr.clips.filter((c) => c.id !== clipId);
+  if (tr.selectedClipId === clipId) tr.selectedClipId = tr.clips.length ? tr.clips[tr.clips.length - 1].id : null;
+  renderTrackClips(tr); layout(); renderTakesWindow();
 }
+function clipUnderPlayhead(tr) { return tr.clips.find((c) => state.playhead >= c.offset - 0.001 && state.playhead < clipEnd(c) + 0.001) || null; }
 
 // ===========================================================================
-// Track DOM
+// Track / clip DOM
 // ===========================================================================
 function buildTracksDOM() {
   el.trackLabels.innerHTML = ''; el.trackLanes.innerHTML = '';
@@ -197,51 +252,53 @@ function buildTracksDOM() {
     label.className = 'lane-label track'; label.style.setProperty('--tc', tr.color);
     label.innerHTML = `<div class="ll-row"><span class="swatch"></span><span class="ll-title"></span><span class="ll-rec hidden"><span class="dot"></span>REC</span></div>`;
     label.querySelector('.swatch').style.background = tr.color;
+    label.querySelector('.ll-title').textContent = tr.name;
     label.addEventListener('click', () => selectTrack(tr.id));
     label.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
 
     const body = document.createElement('div');
     body.className = 'lane-body track'; body.dataset.track = tr.id; body.style.setProperty('--tc', tr.color);
-    const clip = document.createElement('div');
-    clip.className = 'clip hidden';
-    clip.setAttribute('data-title', 'Audio Clip');
-    clip.setAttribute('data-tip', 'মাঝখান টেনে সরান; দুই প্রান্ত টেনে ছোট/বড় করুন। ডান-ক্লিকে অপশন।');
+    body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
+    body.addEventListener('contextmenu', (e) => { if (e.target.closest('.clip')) return; e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
+
+    el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
+    tr.els = { label, body, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
+    renderTrackClips(tr);
+  });
+  updateSelectionUI(); updatePlayheadHeight();
+}
+function renderTrackClips(tr) {
+  if (!tr.els) return;
+  const body = tr.els.body;
+  body.querySelectorAll('.clip:not(.rec-temp)').forEach((n) => n.remove());
+  tr.clips.forEach((clip) => {
+    const clipEl = document.createElement('div');
+    clipEl.className = 'clip';
+    clipEl.setAttribute('data-title', 'Audio Clip');
+    clipEl.setAttribute('data-tip', 'মাঝখান টেনে সরান; দুই প্রান্ত টেনে ছোট/বড় করুন। ডান-ক্লিকে অপশন।');
     const trimL = document.createElement('div'); trimL.className = 'trim left';
     const trimR = document.createElement('div'); trimR.className = 'trim right';
     const canvas = document.createElement('canvas');
-    clip.appendChild(trimL); clip.appendChild(canvas); clip.appendChild(trimR);
-    body.appendChild(clip);
-
-    el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
-    tr.els = { label, body, clip, canvas, trimL, trimR, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
-
-    body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
-    body.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
-    clip.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.trim')) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) moveTake(e, tr, tk); });
-    trimL.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimLeft(e, tr, tk); });
-    trimR.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimRight(e, tr, tk); });
+    clipEl.appendChild(trimL); clipEl.appendChild(canvas); clipEl.appendChild(trimR);
+    body.appendChild(clipEl);
+    clip.els = { clipEl, canvas, trimL, trimR };
+    clipEl.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.trim')) return; e.stopPropagation(); moveClip(e, tr, clip); });
+    trimL.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); trimClip(e, tr, clip, 'l'); });
+    trimR.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); trimClip(e, tr, clip, 'r'); });
+    clipEl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); selectClip(tr, clip.id); showClipMenu(e, tr, clip); });
+    positionClip(tr, clip);
   });
-  state.tracks.forEach(renderTrack);
-  updateSelectionUI();
-  updatePlayheadHeight();
+  highlightClips(tr);
 }
-function renderTrack(tr) {
-  if (!tr.els) return;
-  const { clip, canvas, title } = tr.els;
-  title.textContent = tr.name;
-  const tk = activeTake(tr);
-  if (tk && !(state.recording && state.recTrackId === tr.id)) {
-    clip.classList.remove('recording', 'hidden');
-    const vd = visDur(tk), w = Math.max(4, Math.round(vd * PPS));
-    clip.style.left = Math.round(tk.offset * PPS) + 'px'; clip.style.width = w + 'px';
-    clip.style.borderColor = tr.color; clip.style.background = 'color-mix(in srgb, ' + tr.color + ' 22%, #223230)';
-    if (!tk.peaks) tk.peaks = computePeaks(tk.buffer, PPS);
-    drawPeaksRange(canvas, tk.peaks, WAVE_H, tr.color, Math.floor(tk.trimStart * PPS), Math.ceil(tk.trimEnd * PPS));
-    canvas.style.width = w + 'px'; canvas.style.height = WAVE_H + 'px';
-  } else if (!(state.recording && state.recTrackId === tr.id)) {
-    clip.classList.add('hidden');
-  }
+function positionClip(tr, clip) {
+  const { clipEl, canvas } = clip.els; const vd = visDur(clip), w = Math.max(4, Math.round(vd * PPS));
+  clipEl.style.left = Math.round(clip.offset * PPS) + 'px'; clipEl.style.width = w + 'px';
+  clipEl.style.borderColor = tr.color; clipEl.style.background = 'color-mix(in srgb, ' + tr.color + ' 22%, #223230)';
+  if (!clip.peaks) clip.peaks = computePeaks(clip.buffer, PPS);
+  drawPeaksRange(canvas, clip.peaks, WAVE_H, tr.color, Math.floor(clip.trimStart * PPS), Math.ceil(clip.trimEnd * PPS));
+  canvas.style.width = w + 'px'; canvas.style.height = WAVE_H + 'px';
 }
+function highlightClips(tr) { tr.clips.forEach((c) => c.els && c.els.clipEl.classList.toggle('selected', tr.selectedClipId === c.id && tr.id === state.selectedTrackId)); }
 function updateSelectionUI() {
   state.tracks.forEach((tr) => {
     if (!tr.els) return;
@@ -249,34 +306,28 @@ function updateSelectionUI() {
     tr.els.label.classList.toggle('selected', sel);
     tr.els.body.classList.toggle('selected', sel);
     tr.els.rec.classList.toggle('hidden', !sel);
+    highlightClips(tr);
   });
 }
 function updatePlayheadHeight() { el.playhead.style.height = (RULER_H + state.tracks.length * TRACK_H) + 'px'; }
 
 // ---- clip interactions ----
-function moveTake(e, tr, tk) {
-  selectTrack(tr.id);
-  const d = { x: e.clientX, off: tk.offset };
-  const move = (ev) => { tk.offset = Math.max(0, d.off + (ev.clientX - d.x) / PPS); renderTrack(tr); renderPlayhead(); };
+function moveClip(e, tr, clip) {
+  selectClip(tr, clip.id); pushUndo();
+  const d = { x: e.clientX, off: clip.offset };
+  const move = (ev) => { clip.offset = Math.max(0, d.off + (ev.clientX - d.x) / PPS); positionClip(tr, clip); renderPlayhead(); };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
-function trimLeft(e, tr, tk) {
-  selectTrack(tr.id);
-  const d = { x: e.clientX, ts: tk.trimStart, off: tk.offset };
+function trimClip(e, tr, clip, side) {
+  selectClip(tr, clip.id); pushUndo();
+  const d = { x: e.clientX, ts: clip.trimStart, te: clip.trimEnd, off: clip.offset };
   const move = (ev) => {
     const dx = (ev.clientX - d.x) / PPS;
-    let nts = Math.min(Math.max(0, d.ts + dx), tk.trimEnd - 0.05);
-    const applied = nts - d.ts; tk.trimStart = nts; tk.offset = Math.max(0, d.off + applied);
-    renderTrack(tr); renderPlayhead();
+    if (side === 'l') { let nts = Math.min(Math.max(0, d.ts + dx), clip.trimEnd - 0.05); const ap = nts - d.ts; clip.trimStart = nts; clip.offset = Math.max(0, d.off + ap); }
+    else { clip.trimEnd = Math.min(clip.buffer.duration, Math.max(clip.trimStart + 0.05, d.te + dx)); }
+    positionClip(tr, clip); renderPlayhead();
   };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
-  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-}
-function trimRight(e, tr, tk) {
-  selectTrack(tr.id);
-  const d = { x: e.clientX, te: tk.trimEnd };
-  const move = (ev) => { const dx = (ev.clientX - d.x) / PPS; tk.trimEnd = Math.min(tk.buffer.duration, Math.max(tk.trimStart + 0.05, d.te + dx)); renderTrack(tr); renderPlayhead(); };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
@@ -286,27 +337,33 @@ async function loadFileInto(tr) {
   if (!res.ok) return;
   try {
     const buf = await ctx().decodeAudioData(res.data.slice(0));
-    addTake(tr, buf, 0, res.name.replace(/\.[^.]+$/, ''));
-    selectTrack(tr.id); renderTrack(tr); renderTakesWindow(); layout();
+    pushUndo();
+    addClip(tr, buf, state.playhead);
+    selectTrack(tr.id); renderTrackClips(tr); layout(); renderTakesWindow();
     showToast(`Loaded into ${tr.name}`);
   } catch (e) { console.error(e); showToast('Could not decode that file'); }
 }
 function loadIntoSelected() { let tr = selectedTrack(); if (!tr) tr = addTrack(true); loadFileInto(tr); }
 
 // ===========================================================================
-// Context menu
+// Context menus
 // ===========================================================================
+function menuItem(m, label, fn, cls) { const it = document.createElement('div'); it.className = 'ctx-item' + (cls ? ' ' + cls : ''); it.textContent = label; it.onclick = () => { hideCtx(); fn(); }; m.appendChild(it); }
+function placeMenu(e) { const m = el.ctxMenu; m.classList.remove('hidden'); const mw = m.offsetWidth, mh = m.offsetHeight; m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px'; m.style.top = Math.min(e.clientY, window.innerHeight - mh - 6) + 'px'; }
 function showTrackMenu(e, tr) {
   const m = el.ctxMenu; m.innerHTML = '';
-  const item = (label, fn, cls) => { const it = document.createElement('div'); it.className = 'ctx-item' + (cls ? ' ' + cls : ''); it.textContent = label; it.onclick = () => { hideCtx(); fn(); }; m.appendChild(it); };
-  item('Load audio into track…', () => loadFileInto(tr));
-  if (activeTake(tr)) item('Remove current take', () => removeTake(tr, tr.activeTakeId));
+  menuItem(m, 'Load audio into track…', () => loadFileInto(tr));
   const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
-  item('Delete track', () => deleteTrack(tr.id), 'danger');
-  m.classList.remove('hidden');
-  const mw = m.offsetWidth, mh = m.offsetHeight;
-  m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px';
-  m.style.top = Math.min(e.clientY, window.innerHeight - mh - 6) + 'px';
+  menuItem(m, 'Delete track', () => deleteTrack(tr.id), 'danger');
+  placeMenu(e);
+}
+function showClipMenu(e, tr, clip) {
+  const m = el.ctxMenu; m.innerHTML = '';
+  menuItem(m, 'Export WAV…', () => exportClip(clip, 'wav', tr));
+  menuItem(m, 'Export MP3…', () => exportClip(clip, 'mp3', tr));
+  const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
+  menuItem(m, 'Delete clip', () => removeClip(tr, clip.id), 'danger');
+  placeMenu(e);
 }
 function hideCtx() { el.ctxMenu.classList.add('hidden'); }
 
@@ -315,16 +372,16 @@ function hideCtx() { el.ctxMenu.classList.add('hidden'); }
 // ===========================================================================
 function contentDuration() {
   let d = MIN_DURATION;
-  state.tracks.forEach((tr) => { const tk = activeTake(tr); if (tk) d = Math.max(d, tk.offset + visDur(tk)); });
+  state.tracks.forEach((tr) => tr.clips.forEach((c) => { d = Math.max(d, clipEnd(c)); }));
   if (state.recording) d = Math.max(d, state.playhead + 1);
   return d;
 }
-function invalidatePeaks() { state.tracks.forEach((tr) => tr.takes.forEach((tk) => (tk.peaks = null))); }
+function invalidatePeaks() { state.tracks.forEach((tr) => tr.clips.forEach((c) => (c.peaks = null))); }
 function layout() {
   const px = Math.ceil(contentDuration() * PPS);
   el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px';
   drawRuler(px);
-  if (!state.recording) state.tracks.forEach(renderTrack);
+  if (!state.recording) state.tracks.forEach(renderTrackClips);
   updatePlayheadHeight();
   renderPlayhead();
 }
@@ -391,21 +448,21 @@ function stopMetronome() { state.metroRunning = false; if (state.timerId) { clea
 // Playback
 // ===========================================================================
 function stopSources() { state.playSources.forEach((s) => { try { s.stop(); } catch (_) {} }); state.playSources = []; }
-function scheduleTake(tk, head, ctxStart, exceptTrimLive) {
-  const start = tk.offset, vd = visDur(tk), end = start + vd;
+function scheduleClip(clip, head, ctxStart) {
+  const start = clip.offset, vd = visDur(clip), end = start + vd;
   if (end <= head) return;
-  const s = state.ctx.createBufferSource(); s.buffer = tk.buffer; s.connect(state.tracksGain);
-  if (head <= start) s.start(ctxStart + (start - head), tk.trimStart, vd);
-  else { const into = head - start; s.start(ctxStart, tk.trimStart + into, vd - into); }
+  const s = state.ctx.createBufferSource(); s.buffer = clip.buffer; s.connect(state.tracksGain);
+  if (head <= start) s.start(ctxStart + (start - head), clip.trimStart, vd);
+  else { const into = head - start; s.start(ctxStart, clip.trimStart + into, vd - into); }
   state.playSources.push(s);
 }
-function scheduleAllTracks(head, ctxStart, exceptId) {
-  state.tracks.forEach((tr) => { if (tr.id === exceptId) return; const tk = activeTake(tr); if (tk) scheduleTake(tk, head, ctxStart); });
+function scheduleAll(head, ctxStart, exceptTrackId) {
+  state.tracks.forEach((tr) => { if (tr.id === exceptTrackId) return; tr.clips.forEach((c) => scheduleClip(c, head, ctxStart)); });
 }
 function startPlayback() {
   const c = ctx(); applyOutput(); stopSources();
   const ctxStart = c.currentTime + 0.06; state.playStartCtx = ctxStart; state.playStartHead = state.playhead;
-  scheduleAllTracks(state.playhead, ctxStart, null);
+  scheduleAll(state.playhead, ctxStart, null);
   state.playing = true; updatePlayIcon(); tickPlayhead();
 }
 function tickPlayhead() {
@@ -428,14 +485,16 @@ function updatePlayIcon() { el.playPauseBtn.innerHTML = state.playing ? ICON_PAU
 async function beginRecording(editing) {
   if (state.recording) return;
   let tr = selectedTrack(); if (!tr) tr = addTrack(true);
-  const hasActive = !!activeTake(tr);
-  if (editing && !hasActive) editing = false;
   ctx(); await applyOutput();
   try { await openInput(); } catch (e) { console.error(e); showToast('Cannot open input device'); return; }
 
   state.recording = true; state.editing = editing; state.recTrackId = tr.id;
   state.recStartHead = state.playhead; state.livePeaks = [];
   el.recordBtn.classList.add('armed');
+  // temp recording clip element
+  const recEl = document.createElement('div'); recEl.className = 'clip rec-temp recording';
+  const canvas = document.createElement('canvas'); recEl.appendChild(canvas); tr.els.body.appendChild(recEl);
+  state.recEl = { recEl, canvas };
   const countInBars = parseInt(el.countIn.value, 10) || 0;
   showToast(countInBars ? 'Counting in…' : `Recording into ${tr.name}…`);
   const onDown = (downCtxTime) => {
@@ -449,7 +508,7 @@ async function beginRecording(editing) {
       state.recorder.onstop = finalizeRecording;
       state.recStartCtx = state.ctx.currentTime; state.recorder.start(); recFrame();
     }, delay);
-    scheduleAllTracks(state.recStartHead, downCtxTime, tr.id); // hear other tracks
+    scheduleAll(state.recStartHead, downCtxTime, tr.id); // hear other tracks
   };
   startMetronome(countInBars, onDown);
 }
@@ -459,7 +518,7 @@ function recFrame() {
   state.playhead = state.recStartHead + elapsed;
   state.analyser.getFloatTimeDomainData(state.liveBuf);
   let mx = 0; for (let i = 0; i < state.liveBuf.length; i++) { const a = Math.abs(state.liveBuf[i]); if (a > mx) mx = a; }
-  const dur = state.playhead - state.recStartHead, need = Math.floor(dur * PPS);
+  const need = Math.floor((state.playhead - state.recStartHead) * PPS);
   while (state.livePeaks.length <= need) state.livePeaks.push(mx);
   drawRecordingClip();
   const px = Math.ceil(contentDuration() * PPS);
@@ -468,11 +527,10 @@ function recFrame() {
   state.recRaf = requestAnimationFrame(recFrame);
 }
 function drawRecordingClip() {
-  const tr = trackById(state.recTrackId); if (!tr || !tr.els) return;
-  const { clip, canvas } = tr.els;
-  clip.classList.remove('hidden'); clip.classList.add('recording');
-  clip.style.left = Math.round(state.recStartHead * PPS) + 'px';
-  clip.style.width = Math.max(2, state.livePeaks.length) + 'px';
+  if (!state.recEl) return;
+  const { recEl, canvas } = state.recEl;
+  recEl.style.left = Math.round(state.recStartHead * PPS) + 'px';
+  recEl.style.width = Math.max(2, state.livePeaks.length) + 'px';
   const w = Math.max(1, state.livePeaks.length), h = WAVE_H;
   canvas.width = w; canvas.height = h; canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
   const g = canvas.getContext('2d'); g.clearRect(0, 0, w, h); const mid = h / 2, amp = h / 2 * 0.92;
@@ -487,23 +545,27 @@ function stopRecording() {
 }
 async function finalizeRecording() {
   el.recordBtn.classList.remove('armed');
-  const editing = state.editing, tr = trackById(state.recTrackId); state.editing = false;
-  if (tr && tr.els) tr.els.clip.classList.remove('recording');
-  if (!state.recChunks || !state.recChunks.length) { state.recording = false; if (tr) renderTrack(tr); showToast('Nothing captured'); return; }
+  const editing = state.editing, tr = trackById(state.recTrackId); state.editing = false; state.recording = false;
+  if (state.recEl) { state.recEl.recEl.remove(); state.recEl = null; }
+  if (!state.recChunks || !state.recChunks.length) { if (tr) renderTrackClips(tr); showToast('Nothing captured'); return; }
   const blob = new Blob(state.recChunks, { type: state.recorder.mimeType });
   let recBuf; try { recBuf = await ctx().decodeAudioData((await blob.arrayBuffer()).slice(0)); } catch (e) { console.error('decode', e); showToast('Decode failed'); return; }
-  state.recording = false;
-  const act = tr ? activeTake(tr) : null;
-  if (editing && act) {
-    const keep = Math.max(0, state.recStartHead - act.offset);
-    act.buffer = concatBuffers(ctx(), act.buffer, keep, recBuf); act.trimStart = 0; act.trimEnd = act.buffer.duration; act.peaks = null;
-    showToast(`Overdubbed ${tr.name} · Take ${act.num}`);
-  } else if (tr) {
-    const tk = addTake(tr, recBuf, state.recStartHead);
-    showToast(`${tr.name} · Take ${tk.num} recorded`);
+  if (!tr) return;
+  pushUndo();
+  const under = clipUnderPlayheadAt(tr, state.recStartHead);
+  if (editing && under) {
+    const keep = Math.max(0, state.recStartHead - under.offset);
+    under.buffer = concatBuffers(ctx(), under.buffer, keep, recBuf); under.trimStart = 0; under.trimEnd = under.buffer.duration; under.peaks = null;
+    tr.selectedClipId = under.id;
+    showToast(`Overdubbed ${tr.name} · clip #${under.num}`);
+  } else {
+    const overlaps = tr.clips.some((c) => state.recStartHead < clipEnd(c) && state.recStartHead + recBuf.duration > c.offset);
+    const clip = addClip(tr, recBuf, state.recStartHead);
+    showToast(overlaps ? `Recorded (overlaps an existing clip — both kept)` : `${tr.name} · clip #${clip.num} recorded`);
   }
-  state.playhead = state.recStartHead; if (tr) renderTrack(tr); layout(); renderTakesWindow();
+  state.playhead = state.recStartHead; renderTrackClips(tr); layout(); renderTakesWindow();
 }
+function clipUnderPlayheadAt(tr, t) { return tr.clips.find((c) => t >= c.offset - 0.001 && t < clipEnd(c) + 0.001) || null; }
 function concatBuffers(c, a, keepSeconds, b) {
   const sr = a.sampleRate, keep = Math.max(0, Math.min(a.length, Math.floor(keepSeconds * sr))), numCh = Math.max(a.numberOfChannels, b.numberOfChannels);
   const out = c.createBuffer(numCh, keep + b.length, sr);
@@ -517,34 +579,32 @@ function concatBuffers(c, a, keepSeconds, b) {
 }
 
 // ===========================================================================
-// Floating Takes window
+// Takes drawer (selected track's clips)
 // ===========================================================================
 function renderTakesWindow() {
   const tr = selectedTrack();
   el.tpTrack.textContent = tr ? tr.name : '';
   el.tpBody.innerHTML = '';
-  if (!tr || !tr.takes.length) { el.tpBody.innerHTML = '<div class="tw-empty">No takes yet.</div>'; return; }
-  [...tr.takes].sort((a, b) => b.num - a.num).forEach((take) => {
+  if (!tr || !tr.clips.length) { el.tpBody.innerHTML = '<div class="tw-empty">No recordings on this track yet.</div>'; return; }
+  [...tr.clips].sort((a, b) => b.num - a.num).forEach((clip) => {
     const item = document.createElement('div');
-    item.className = 'take-item' + (take.id === tr.activeTakeId ? ' current' : '');
-    item.setAttribute('data-title', 'Take'); item.setAttribute('data-tip', 'ক্লিক করে এই টেকটি ট্র্যাকে সক্রিয় করুন।');
+    item.className = 'take-item' + (clip.id === tr.selectedClipId ? ' current' : '');
+    item.setAttribute('data-title', 'Take'); item.setAttribute('data-tip', 'ক্লিক করে টাইমলাইনে এই রেকর্ডিং-এ যান।');
     item.innerHTML = `
-      <div class="take-num">#${take.num}</div>
-      <div class="take-mini"><canvas></canvas><div class="take-meta">${fmt(take.buffer.duration)} · ${take.createdAt.toLocaleTimeString()}</div></div>
+      <div class="take-num">#${clip.num}</div>
+      <div class="take-mini"><canvas></canvas><div class="take-meta">${fmt(visDur(clip))} · @ ${fmt(clip.offset)}</div></div>
       <div class="take-ctrls">
-        <button data-a="use" data-title="Use" data-tip="এই টেকটি ট্র্যাকে সক্রিয় করুন।">Use</button>
         <button data-a="wav" data-title="Export WAV" data-tip="লসলেস WAV হিসেবে সেভ করুন।">WAV</button>
         <button data-a="mp3" data-title="Export MP3" data-tip="১৯২ kbps MP3 হিসেবে সেভ করুন।">MP3</button>
-        <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই টেকটি মুছে ফেলুন।">${SVG_TRASH}</button>
+        <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই রেকর্ডিং মুছে ফেলুন।">${SVG_TRASH}</button>
       </div>`;
-    item.onclick = (e) => { if (!e.target.closest('button')) setActiveTake(tr, take.id); };
-    item.querySelector('[data-a="use"]').onclick = () => setActiveTake(tr, take.id);
-    item.querySelector('[data-a="wav"]').onclick = () => exportTake(take, 'wav', tr);
-    item.querySelector('[data-a="mp3"]').onclick = () => exportTake(take, 'mp3', tr);
-    item.querySelector('[data-a="del"]').onclick = () => removeTake(tr, take.id);
+    item.onclick = (e) => { if (!e.target.closest('button')) { selectClip(tr, clip.id); el.timelineScroll.scrollLeft = clip.offset * PPS - 60; } };
+    item.querySelector('[data-a="wav"]').onclick = () => exportClip(clip, 'wav', tr);
+    item.querySelector('[data-a="mp3"]').onclick = () => exportClip(clip, 'mp3', tr);
+    item.querySelector('[data-a="del"]').onclick = () => removeClip(tr, clip.id);
     el.tpBody.appendChild(item);
-    if (!take.peaks) take.peaks = computePeaks(take.buffer, PPS);
-    requestAnimationFrame(() => drawMini(item.querySelector('canvas'), take.peaks, tr.color));
+    if (!clip.peaks) clip.peaks = computePeaks(clip.buffer, PPS);
+    requestAnimationFrame(() => drawMini(item.querySelector('canvas'), clip.peaks, tr.color));
   });
 }
 function toggleTakesWindow(force) {
@@ -558,10 +618,19 @@ function toggleTakesWindow(force) {
 // ===========================================================================
 // Export
 // ===========================================================================
-async function exportTake(take, format, tr) {
+function trimmedBuffer(clip) {
+  // Render only the visible (trimmed) region for export.
+  const b = clip.buffer, sr = b.sampleRate;
+  const s = Math.floor(clip.trimStart * sr), e = Math.min(b.length, Math.floor(clip.trimEnd * sr));
+  const len = Math.max(1, e - s), out = ctx().createBuffer(b.numberOfChannels, len, sr);
+  for (let ch = 0; ch < b.numberOfChannels; ch++) { const src = b.getChannelData(ch), dst = out.getChannelData(ch); for (let i = 0; i < len; i++) dst[i] = src[s + i] || 0; }
+  return out;
+}
+async function exportClip(clip, format, tr) {
   showToast(`Exporting ${format.toUpperCase()}…`);
-  const bytes = format === 'wav' ? encodeWav(take.buffer) : encodeMp3(take.buffer);
-  const base = `${(tr ? tr.name : 'Take').replace(/\s+/g, '_')}_take${take.num}`;
+  const buf = trimmedBuffer(clip);
+  const bytes = format === 'wav' ? encodeWav(buf) : encodeMp3(buf);
+  const base = `${(tr ? tr.name : 'Clip').replace(/\s+/g, '_')}_clip${clip.num}`;
   const res = await ipcRenderer.invoke('save-file', { defaultName: `${base}.${format}`, data: bytes });
   showToast(res.ok ? 'Exported' : 'Cancelled');
 }
@@ -641,11 +710,14 @@ function initBpmDrag() {
 }
 
 // ===========================================================================
-// Tooltips
+// Tooltips (English name + localized body)
 // ===========================================================================
 let tipTimer = null;
 function showTip(node) {
-  const title = node.getAttribute('data-title') || '', body = node.getAttribute('data-tip') || '';
+  const title = node.getAttribute('data-title') || '';
+  const bn = node.getAttribute('data-tip') || '';
+  const en = EN_BODY[title] || bn;
+  const body = state.lang === 'bn' ? bn : en;
   if (!title && !body) return;
   const tip = el.tooltip;
   tip.innerHTML = (title ? `<div class="tt-title">${title}</div>` : '') + (body ? `<div class="tt-body">${body}</div>` : '');
@@ -665,13 +737,14 @@ document.addEventListener('pointerdown', (e) => { clearTimeout(tipTimer); hideTi
 // ===========================================================================
 el.metroBtn.onclick = () => { if (state.metroRunning) { stopMetronome(); el.metroBtn.classList.remove('active'); } else { el.metroBtn.classList.add('active'); startMetronome(0, null); } };
 el.recordBtn.onclick = () => { if (state.recording) stopRecording(); else beginRecording(state.editMode); };
-el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs from the playhead' : 'Edit mode off'); };
+el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs the clip under the playhead' : 'Edit mode off'); };
 el.playPauseBtn.onclick = () => { state.playing ? pausePlayback() : startPlayback(); };
 el.stopBtn.onclick = () => { if (state.recording) stopRecording(); else { pausePlayback(); seek(0, false); } };
 el.takesBtn.onclick = () => toggleTakesWindow();
 el.tpHeader.onclick = () => toggleTakesWindow();
 el.testBtn.onclick = testOutput;
-el.addTrackBtn.onclick = () => { addTrack(); showToast('Track added'); };
+el.addTrackBtn.onclick = userAddTrack;
+el.addTrackRow.onclick = userAddTrack;
 el.loadBackingBtn.onclick = loadIntoSelected;
 el.settingsBtn.onclick = () => { el.settingsPanel.classList.toggle('hidden'); el.settingsBtn.classList.toggle('active'); };
 el.refreshDevices.onclick = listDevices;
@@ -679,6 +752,7 @@ el.inputDevice.onchange = () => (state.inputDeviceId = el.inputDevice.value);
 el.outputDevice.onchange = () => { state.outputDeviceId = el.outputDevice.value; applyOutput(); };
 el.monitorToggle.onchange = () => { state.monitor = el.monitorToggle.checked; if (state.monitorGain) state.monitorGain.gain.value = state.monitor ? 1 : 0; };
 el.backingVol.oninput = () => { if (state.tracksGain) state.tracksGain.gain.value = parseFloat(el.backingVol.value); };
+el.langSelect.onchange = () => { state.lang = el.langSelect.value; showToast(state.lang === 'bn' ? 'ভাষা: বাংলা' : 'Language: English'); };
 
 holdRepeat(el.bpmUp, +1); holdRepeat(el.bpmDown, -1); initBpmDrag();
 
@@ -687,20 +761,18 @@ el.timelineScroll.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey)
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (mod && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
+  if (mod) return;
   if (e.repeat) return;
-  if (e.code === 'Space') {
-    e.preventDefault();
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    state.playing ? pausePlayback() : startPlayback();
-  } else if (e.code === 'KeyR') {
-    e.preventDefault();
-    if (state.recording) stopRecording(); else beginRecording(state.editMode);
-  }
+  if (e.code === 'Space') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); state.playing ? pausePlayback() : startPlayback(); }
+  else if (e.code === 'KeyR') { e.preventDefault(); if (state.recording) stopRecording(); else beginRecording(state.editMode); }
 });
 
 // Init
 setBpm(100); updatePlayIcon();
-addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id; // start with two tracks, first selected
+addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
 buildTracksDOM(); layout(); renderTakesWindow(); listDevices();
 navigator.mediaDevices.addEventListener('devicechange', listDevices);
 window.addEventListener('resize', renderTakesWindow);
