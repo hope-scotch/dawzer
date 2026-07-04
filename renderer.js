@@ -72,7 +72,7 @@ const el = {};
   'metroBtn','recordBtn','editBtn','playPauseBtn','stopBtn',
   'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
   'clock','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
-  'settingsPanel','inputDevice','outputDevice','monitorToggle','backingVol','langSelect','refreshDevices','deviceStatus',
+  'settingsModal','settingsClose','settingsBackdrop','inputDevice','outputDevice','monitorToggle','backingVol','langSelect','refreshDevices','deviceStatus',
   'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
   'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
 ].forEach((id) => (el[id] = $(id)));
@@ -222,12 +222,35 @@ function addTrack(silent) {
 }
 function userAddTrack() { pushUndo(); addTrack(false); showToast('Track added'); }
 function deleteTrack(id) {
+  if (state.tracks.length <= 1) { showToast("Can't delete the only track"); return; }
   pushUndo();
   state.tracks = state.tracks.filter((t) => t.id !== id);
   if (state.selectedTrackId === id) state.selectedTrackId = state.tracks.length ? state.tracks[state.tracks.length - 1].id : null;
   buildTracksDOM(); layout(); renderTakesWindow();
 }
 function selectTrack(id) { if (state.selectedTrackId !== id) { state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); } }
+function startRename(tr) {
+  if (!tr.els) return;
+  const title = tr.els.title;
+  const input = document.createElement('input');
+  input.className = 'track-rename'; input.value = tr.name; input.maxLength = 24;
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('pointerdown', (e) => e.stopPropagation());
+  input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = tr.name; input.blur(); } });
+  let done = false;
+  const commit = () => {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (v && v !== tr.name) { pushUndo(); tr.name = v; }
+    const span = document.createElement('span'); span.className = 'll-title'; span.textContent = tr.name;
+    span.addEventListener('dblclick', (e) => { e.stopPropagation(); startRename(tr); });
+    input.replaceWith(span); tr.els.title = span;
+    renderTakesWindow();
+  };
+  input.addEventListener('blur', commit, { once: true });
+  title.replaceWith(input); tr.els.title = input;
+  input.focus(); input.select();
+}
 function addTake(tr, buffer, offset) {
   tr.takeSeq++;
   const t = { id: ++idCounter, num: tr.takeSeq, buffer, peaks: null, offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, createdAt: new Date() };
@@ -270,6 +293,7 @@ function buildTracksDOM() {
 
     el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
     tr.els = { label, body, clip, canvas, trimL, trimR, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
+    tr.els.title.addEventListener('dblclick', (e) => { e.stopPropagation(); startRename(tr); });
 
     body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
     body.addEventListener('contextmenu', (e) => { if (e.target.closest('.clip')) return; e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
@@ -348,10 +372,12 @@ function loadIntoSelected() { let tr = selectedTrack(); if (!tr) tr = addTrack(t
 function menuItem(m, label, fn, cls) { const it = document.createElement('div'); it.className = 'ctx-item' + (cls ? ' ' + cls : ''); it.textContent = label; it.onclick = () => { hideCtx(); fn(); }; m.appendChild(it); }
 function showTrackMenu(e, tr) {
   const m = el.ctxMenu; m.innerHTML = '';
+  menuItem(m, 'Rename track', () => startRename(tr));
   menuItem(m, 'Load audio into track…', () => loadFileInto(tr));
   if (activeTake(tr)) menuItem(m, 'Remove current take', () => removeTake(tr, tr.activeTakeId));
   const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
-  menuItem(m, 'Delete track', () => deleteTrack(tr.id), 'danger');
+  if (state.tracks.length <= 1) menuItem(m, 'Delete track', () => showToast("Can't delete the only track"), 'danger disabled');
+  else menuItem(m, 'Delete track', () => deleteTrack(tr.id), 'danger');
   m.classList.remove('hidden');
   const mw = m.offsetWidth, mh = m.offsetHeight;
   m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px';
@@ -738,7 +764,11 @@ el.testBtn.onclick = testOutput;
 el.addTrackBtn.onclick = userAddTrack;
 el.addTrackRow.onclick = userAddTrack;
 el.loadBackingBtn.onclick = loadIntoSelected;
-el.settingsBtn.onclick = () => { el.settingsPanel.classList.toggle('hidden'); el.settingsBtn.classList.toggle('active'); };
+function openSettings() { el.settingsModal.classList.remove('hidden'); el.settingsBtn.classList.add('active'); }
+function closeSettings() { el.settingsModal.classList.add('hidden'); el.settingsBtn.classList.remove('active'); }
+el.settingsBtn.onclick = () => { el.settingsModal.classList.contains('hidden') ? openSettings() : closeSettings(); };
+el.settingsClose.onclick = closeSettings;
+el.settingsBackdrop.onclick = closeSettings;
 el.refreshDevices.onclick = listDevices;
 el.inputDevice.onchange = () => (state.inputDeviceId = el.inputDevice.value);
 el.outputDevice.onchange = () => { state.outputDeviceId = el.outputDevice.value; applyOutput(); };
@@ -752,6 +782,7 @@ el.rulerCanvas.addEventListener('pointerdown', timelineDown);
 el.timelineScroll.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(PPS * Math.exp(-e.deltaY * 0.002), e.clientX); } }, { passive: false });
 
 document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && !el.settingsModal.classList.contains('hidden')) { closeSettings(); return; }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }

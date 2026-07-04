@@ -254,3 +254,25 @@ body {
 /* Add-track row under the last track */
 .add-track-row { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; border: none; border-top: 1px dashed var(--border); color: var(--muted); cursor: pointer; padding: 11px 12px; font-size: 12px; font-weight: 600; }
 .add-track-row:hover { color: var(--text); background: var(--panel-2); }
+
+/* Inline track rename */
+.track-rename { font-size: 13px; font-weight: 600; background: #14171d; color: var(--text); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px; width: 98px; font-family: inherit; outline: none; }
+
+/* Disabled context-menu item */
+.ctx-item.disabled { color: #5c6577; cursor: default; }
+.ctx-item.disabled:hover { background: transparent; color: #5c6577; }
+
+/* ---------- Modal ---------- */
+.modal { position: fixed; inset: 0; z-index: 150; display: flex; align-items: center; justify-content: center; }
+.modal.hidden { display: none; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(9, 13, 12, .55); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.modal-card { position: relative; width: min(520px, 92vw); max-height: 86vh; overflow: auto;
+  background: linear-gradient(180deg, #232f32, #1d2729); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.6); animation: modalIn 180ms ease; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+.modal-title { font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 15px; color: var(--text); }
+.modal-close { width: 30px; height: 30px; border: none; background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.modal-close:hover { background: #3a2b2b; color: var(--record); }
+.modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.modal-body .set-row { grid-template-columns: 150px 1fr; }

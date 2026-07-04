@@ -84,20 +84,6 @@
       </div>
     </header>
 
-    <!-- ===================== SETTINGS PANEL ===================== -->
-    <section id="settingsPanel" class="settings hidden">
-      <div class="set-row"><label>Input (record from)</label><select id="inputDevice"></select></div>
-      <div class="set-row"><label>Output (listen through)</label><select id="outputDevice"></select></div>
-      <div class="set-row"><label>Monitor input</label>
-        <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
-      <div class="set-row"><label>Language</label>
-        <select id="langSelect"><option value="en">English</option><option value="bn">বাংলা (Bengali)</option></select></div>
-      <div class="set-row"><label>Tracks volume</label><input type="range" id="backingVol" min="0" max="1" step="0.01" value="0.85" /></div>
-      <div class="set-row"><label>Take volume</label><input type="range" id="takeVol" min="0" max="1" step="0.01" value="1" /></div>
-      <div class="set-row"><button id="refreshDevices" class="ghost">
-        <svg viewBox="0 0 24 24" class="icn sm"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>Refresh devices</button>
-        <span id="deviceStatus" class="hint"></span></div>
-    </section>
 
     <!-- ===================== TIMELINE EDITOR ===================== -->
     <section class="editor">
@@ -130,6 +116,32 @@
       </button>
       <div class="tp-body" id="tpBody"></div>
     </section>
+  </div>
+
+  <!-- ===================== SETTINGS MODAL ===================== -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-backdrop" id="settingsBackdrop"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span class="modal-title">Audio Setup</span>
+        <button id="settingsClose" class="modal-close" data-title="Close" data-tip="বন্ধ করুন।">
+          <svg viewBox="0 0 24 24" class="icn sm"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="set-row"><label>Input (record from)</label><select id="inputDevice"></select></div>
+        <div class="set-row"><label>Output (listen through)</label><select id="outputDevice"></select></div>
+        <div class="set-row"><label>Monitor input</label>
+          <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
+        <div class="set-row"><label>Language</label>
+          <select id="langSelect"><option value="en">English</option><option value="bn">বাংলা (Bengali)</option></select></div>
+        <div class="set-row"><label>Tracks volume</label><input type="range" id="backingVol" min="0" max="1" step="0.01" value="0.85" /></div>
+        <div class="set-row"><label>Take volume</label><input type="range" id="takeVol" min="0" max="1" step="0.01" value="1" /></div>
+        <div class="set-row"><button id="refreshDevices" class="ghost">
+          <svg viewBox="0 0 24 24" class="icn sm"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>Refresh devices</button>
+          <span id="deviceStatus" class="hint"></span></div>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast"></div>
