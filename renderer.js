@@ -35,6 +35,7 @@ const EN_BODY = {
   'Load Track': 'Load an audio file into the selected track.',
   'Audio Setup': 'Choose input & output devices and the language.',
   'Zoom': 'Zoom the timeline: Ctrl + scroll, or pinch on a trackpad.',
+  'Track Volume': 'Volume of this track.',
   'Audio Clip': 'Drag the middle to move; drag the edges to resize. Right-click for options.',
   'Take': 'Click to show this take on the track.',
   'Use': 'Make this the active take on the track.',
@@ -47,7 +48,7 @@ const EN_BODY = {
 const state = {
   ctx: null, inputStream: null,
   inputDeviceId: 'default', outputDeviceId: 'default',
-  monitor: false, monitorSource: null, monitorGain: null, tracksGain: null,
+  monitor: false, monitorSource: null, monitorGain: null,
   lang: 'en',
 
   bpm: 100, editMode: false,
@@ -72,7 +73,7 @@ const el = {};
   'metroBtn','recordBtn','editBtn','playPauseBtn','stopBtn',
   'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
   'clock','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
-  'settingsModal','settingsClose','settingsBackdrop','inputDevice','outputDevice','monitorToggle','backingVol','langSelect','refreshDevices','deviceStatus',
+  'settingsModal','settingsClose','settingsBackdrop','inputDevice','outputDevice','monitorToggle','langSelect','refreshDevices','deviceStatus',
   'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
   'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
 ].forEach((id) => (el[id] = $(id)));
@@ -81,14 +82,14 @@ const el = {};
 // Audio context
 // ===========================================================================
 function ctx() {
-  if (!state.ctx) {
-    state.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    state.tracksGain = state.ctx.createGain();
-    state.tracksGain.gain.value = parseFloat(el.backingVol.value);
-    state.tracksGain.connect(state.ctx.destination);
-  }
+  if (!state.ctx) state.ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (state.ctx.state === 'suspended') state.ctx.resume();
   return state.ctx;
+}
+function trackGain(tr) {
+  if (!tr.gainNode) { tr.gainNode = state.ctx.createGain(); tr.gainNode.connect(state.ctx.destination); }
+  tr.gainNode.gain.value = (tr.volume == null ? 1 : tr.volume);
+  return tr.gainNode;
 }
 async function applyOutput() {
   const c = ctx();
@@ -186,7 +187,7 @@ function snap() {
   return {
     trackSeq: state.trackSeq, selectedTrackId: state.selectedTrackId,
     tracks: state.tracks.map((tr) => ({
-      id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId,
+      id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId, volume: tr.volume,
       takes: tr.takes.map((t) => ({ id: t.id, num: t.num, offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd, createdAt: t.createdAt, buffer: t.buffer })),
     })),
   };
@@ -195,7 +196,7 @@ function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length >
 function restore(s) {
   state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
   state.tracks = s.tracks.map((t) => ({
-    id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, els: null,
+    id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, volume: t.volume == null ? 1 : t.volume, gainNode: null, els: null,
     takes: t.takes.map((tk) => ({ id: tk.id, num: tk.num, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd, createdAt: tk.createdAt, buffer: tk.buffer, peaks: null })),
   }));
   buildTracksDOM(); layout(); renderTakesWindow();
@@ -213,7 +214,7 @@ function visDur(t) { return t.trimEnd - t.trimStart; }
 
 function addTrack(silent) {
   state.trackSeq++;
-  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], takeSeq: 0, activeTakeId: null, els: null };
+  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], takeSeq: 0, activeTakeId: null, volume: 1, gainNode: null, els: null };
   state.tracks.push(tr);
   state.selectedTrackId = tr.id;
   buildTracksDOM();
@@ -273,9 +274,14 @@ function buildTracksDOM() {
   state.tracks.forEach((tr) => {
     const label = document.createElement('div');
     label.className = 'lane-label track'; label.style.setProperty('--tc', tr.color);
-    label.innerHTML = `<div class="ll-row"><span class="swatch"></span><span class="ll-title"></span><span class="ll-rec hidden"><span class="dot"></span>REC</span></div>`;
+    label.innerHTML = `<div class="ll-row"><span class="swatch"></span><span class="ll-title"></span><span class="ll-rec hidden"><span class="dot"></span>REC</span></div>
+      <div class="ll-vol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg><input type="range" class="track-vol slider" min="0" max="1" step="0.01" data-title="Track Volume" data-tip="এই ট্র্যাকের ভলিউম।" /></div>`;
     label.querySelector('.swatch').style.background = tr.color;
     label.querySelector('.ll-title').textContent = tr.name;
+    const volInput = label.querySelector('.track-vol');
+    volInput.value = tr.volume == null ? 1 : tr.volume;
+    volInput.addEventListener('input', () => { tr.volume = parseFloat(volInput.value); if (tr.gainNode) tr.gainNode.gain.value = tr.volume; });
+    styleRange(volInput);
     label.addEventListener('click', () => selectTrack(tr.id));
     label.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
 
@@ -466,16 +472,16 @@ function stopMetronome() { state.metroRunning = false; if (state.timerId) { clea
 // Playback
 // ===========================================================================
 function stopSources() { state.playSources.forEach((s) => { try { s.stop(); } catch (_) {} }); state.playSources = []; }
-function scheduleTake(tk, head, ctxStart) {
+function scheduleTake(tr, tk, head, ctxStart) {
   const start = tk.offset, vd = visDur(tk), end = start + vd;
   if (end <= head) return;
-  const s = state.ctx.createBufferSource(); s.buffer = tk.buffer; s.connect(state.tracksGain);
+  const s = state.ctx.createBufferSource(); s.buffer = tk.buffer; s.connect(trackGain(tr));
   if (head <= start) s.start(ctxStart + (start - head), tk.trimStart, vd);
   else { const into = head - start; s.start(ctxStart, tk.trimStart + into, vd - into); }
   state.playSources.push(s);
 }
 function scheduleAll(head, ctxStart, exceptTrackId) {
-  state.tracks.forEach((tr) => { if (tr.id === exceptTrackId) return; const tk = activeTake(tr); if (tk) scheduleTake(tk, head, ctxStart); });
+  state.tracks.forEach((tr) => { if (tr.id === exceptTrackId) return; const tk = activeTake(tr); if (tk) scheduleTake(tr, tk, head, ctxStart); });
 }
 function startPlayback() {
   const c = ctx(); applyOutput(); stopSources();
@@ -705,6 +711,13 @@ function timelineUp() { seeking = false; window.removeEventListener('pointermove
 let toastTimer = null;
 function showToast(msg) { el.toast.textContent = msg; el.toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove('show'), 1900); }
 
+// Fills a range slider's track up to its value via the --p CSS variable.
+function styleRange(input) {
+  const min = parseFloat(input.min) || 0, max = parseFloat(input.max) || 1;
+  const upd = () => input.style.setProperty('--p', (((parseFloat(input.value) - min) / (max - min)) * 100) + '%');
+  upd(); input.addEventListener('input', upd);
+}
+
 // ===========================================================================
 // BPM control
 // ===========================================================================
@@ -773,8 +786,8 @@ el.refreshDevices.onclick = listDevices;
 el.inputDevice.onchange = () => (state.inputDeviceId = el.inputDevice.value);
 el.outputDevice.onchange = () => { state.outputDeviceId = el.outputDevice.value; applyOutput(); };
 el.monitorToggle.onchange = () => { state.monitor = el.monitorToggle.checked; if (state.monitorGain) state.monitorGain.gain.value = state.monitor ? 1 : 0; };
-el.backingVol.oninput = () => { if (state.tracksGain) state.tracksGain.gain.value = parseFloat(el.backingVol.value); };
 el.langSelect.onchange = () => { state.lang = el.langSelect.value; showToast(state.lang === 'bn' ? 'ভাষা: বাংলা' : 'Language: English'); };
+styleRange(el.clickVol);
 
 holdRepeat(el.bpmUp, +1); holdRepeat(el.bpmDown, -1); initBpmDrag();
 

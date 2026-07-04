@@ -60,7 +60,7 @@
         </div>
         <div class="mfield click" data-title="Click Volume" data-tip="মেট্রোনোম ক্লিকের শব্দের মাত্রা।">
           <span class="chip-label">Click</span>
-          <div class="mbody"><input type="range" id="clickVol" min="0" max="1" step="0.01" value="0.7" /></div>
+          <div class="mbody"><input type="range" id="clickVol" class="slider" min="0" max="1" step="0.01" value="0.7" /></div>
         </div>
       </div>
 
@@ -135,8 +135,6 @@
           <div class="inline"><input type="checkbox" id="monitorToggle" /><span class="hint">Hear yourself while recording (use headphones)</span></div></div>
         <div class="set-row"><label>Language</label>
           <select id="langSelect"><option value="en">English</option><option value="bn">বাংলা (Bengali)</option></select></div>
-        <div class="set-row"><label>Tracks volume</label><input type="range" id="backingVol" min="0" max="1" step="0.01" value="0.85" /></div>
-        <div class="set-row"><label>Take volume</label><input type="range" id="takeVol" min="0" max="1" step="0.01" value="1" /></div>
         <div class="set-row"><button id="refreshDevices" class="ghost">
           <svg viewBox="0 0 24 24" class="icn sm"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>Refresh devices</button>
           <span id="deviceStatus" class="hint"></span></div>
