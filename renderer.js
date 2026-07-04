@@ -54,7 +54,7 @@ const state = {
   monitor: false, monitorSource: null, monitorGain: null,
   lang: 'en',
 
-  bpm: 100, editMode: false, metronomeOn: true, projectName: 'Untitled',
+  bpm: 100, editMode: false, metronomeOn: true, projectName: 'Untitled', dirty: false,
   playhead: 0, playing: false, playStartCtx: 0, playStartHead: 0, raf: null,
 
   metroRunning: false, nextNoteTime: 0, beatCounter: 0, countInLeft: 0, timerId: null, onDownbeat: null,
@@ -97,6 +97,8 @@ function trackGain(tr) {
   return tr.gainNode;
 }
 function applyTrackGains() { state.tracks.forEach((tr) => { if (tr.gainNode) tr.gainNode.gain.value = trackAudible(tr) ? (tr.volume == null ? 1 : tr.volume) : 0; }); }
+function setMute(tr, val) { if (!tr) return; tr.muted = val; if (tr.els) tr.els.label.querySelector('.mute').classList.toggle('on', tr.muted); applyTrackGains(); markDirty(); }
+function setSolo(tr, val) { if (!tr) return; tr.soloed = val; if (tr.els) tr.els.label.querySelector('.solo').classList.toggle('on', tr.soloed); applyTrackGains(); markDirty(); }
 async function applyOutput() {
   const c = ctx();
   if (typeof c.setSinkId === 'function') {
@@ -198,7 +200,9 @@ function snap() {
     })),
   };
 }
-function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length > 80) state.undoStack.shift(); state.redoStack = []; }
+function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length > 80) state.undoStack.shift(); state.redoStack = []; markDirty(); }
+function markDirty() { state.dirty = true; }
+function clearDirty() { state.dirty = false; }
 function restore(s) {
   state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
   state.tracks = s.tracks.map((t) => ({
@@ -289,12 +293,12 @@ function buildTracksDOM() {
     label.querySelector('.swatch').style.background = tr.color;
     label.querySelector('.ll-title').textContent = tr.name;
     const muteBtn = label.querySelector('.mute'); muteBtn.classList.toggle('on', !!tr.muted);
-    muteBtn.addEventListener('click', (e) => { e.stopPropagation(); tr.muted = !tr.muted; muteBtn.classList.toggle('on', tr.muted); applyTrackGains(); });
+    muteBtn.addEventListener('click', (e) => { e.stopPropagation(); setMute(tr, !tr.muted); });
     const soloBtn = label.querySelector('.solo'); soloBtn.classList.toggle('on', !!tr.soloed);
-    soloBtn.addEventListener('click', (e) => { e.stopPropagation(); tr.soloed = !tr.soloed; soloBtn.classList.toggle('on', tr.soloed); applyTrackGains(); });
+    soloBtn.addEventListener('click', (e) => { e.stopPropagation(); setSolo(tr, !tr.soloed); });
     const volInput = label.querySelector('.track-vol');
     volInput.value = tr.volume == null ? 1 : tr.volume;
-    volInput.addEventListener('input', () => { tr.volume = parseFloat(volInput.value); applyTrackGains(); });
+    volInput.addEventListener('input', () => { tr.volume = parseFloat(volInput.value); applyTrackGains(); markDirty(); });
     styleRange(volInput);
     label.addEventListener('click', () => selectTrack(tr.id));
     label.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
@@ -713,13 +717,11 @@ function renderTakesWindow() {
       <div class="take-num">#${take.num}</div>
       <div class="take-mini"><canvas></canvas><div class="take-meta">${take.name || ('Take ' + take.num)} · ${fmt(visDur(take))}</div></div>
       <div class="take-ctrls">
-        <button data-a="use" data-title="Use" data-tip="এই টেকটি ট্র্যাকে সক্রিয় করুন।">Use</button>
         <button data-a="wav" data-title="Export WAV" data-tip="লসলেস WAV হিসেবে সেভ করুন।">WAV</button>
         <button data-a="mp3" data-title="Export MP3" data-tip="১৯২ kbps MP3 হিসেবে সেভ করুন।">MP3</button>
         <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই টেকটি মুছে ফেলুন।">${SVG_TRASH}</button>
       </div>`;
     item.onclick = (e) => { if (!e.target.closest('button')) setActiveTake(tr, take.id); };
-    item.querySelector('[data-a="use"]').onclick = () => setActiveTake(tr, take.id);
     item.querySelector('[data-a="wav"]').onclick = () => exportTake(take, 'wav', tr);
     item.querySelector('[data-a="mp3"]').onclick = () => exportTake(take, 'mp3', tr);
     item.querySelector('[data-a="del"]').onclick = () => removeTake(tr, take.id);
@@ -794,20 +796,27 @@ function serializeProject() {
     })),
   };
 }
+async function confirmDiscard() {
+  if (!state.dirty) return 'discard';
+  const r = await ipcRenderer.invoke('confirm-unsaved');
+  return ['save', 'discard', 'cancel'][r] || 'cancel';
+}
 async function saveProject() {
   showToast('Saving…');
   const bytes = new TextEncoder().encode(JSON.stringify(serializeProject()));
   const res = await ipcRenderer.invoke('save-project', { defaultName: (state.projectName || 'Untitled') + '.dawzer', data: bytes });
-  if (res.ok) { state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); showToast('Project saved'); }
+  if (res.ok) { state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); clearDirty(); showToast('Project saved'); }
   else showToast('Save cancelled');
 }
 async function openProject() {
+  const c = await confirmDiscard(); if (c === 'cancel') return;
+  if (c === 'save') { await saveProject(); if (state.dirty) return; }
   const res = await ipcRenderer.invoke('open-project');
   if (!res.ok) return;
   try {
     const p = JSON.parse(new TextDecoder().decode(new Uint8Array(res.data)));
     await loadProject(p);
-    state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle();
+    state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); clearDirty();
     showToast('Project opened');
   } catch (e) { console.error(e); showToast('Could not open project'); }
 }
@@ -837,12 +846,14 @@ async function loadProject(p) {
   state.undoStack = []; state.redoStack = []; state.playhead = 0;
   buildTracksDOM(); layout(); renderTakesWindow();
 }
-function newProject() {
+async function newProject() {
+  const c = await confirmDiscard(); if (c === 'cancel') return;
+  if (c === 'save') { await saveProject(); if (state.dirty) return; }
   if (state.recording) stopRecording(); if (state.playing) pausePlayback();
   state.tracks = []; state.trackSeq = 0; state.selectedTrackId = null; state.undoStack = []; state.redoStack = []; state.playhead = 0;
   addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
   state.projectName = 'Untitled'; updateTitle();
-  buildTracksDOM(); layout(); renderTakesWindow(); showToast('New project');
+  buildTracksDOM(); layout(); renderTakesWindow(); clearDirty(); showToast('New project');
 }
 function showProjectMenu(e) {
   const m = el.ctxMenu; m.innerHTML = '';
@@ -991,13 +1002,23 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); if (state.recording) stopRecording(); else state.playing ? pausePlayback() : startPlayback(); }
   else if (e.code === 'KeyR') { e.preventDefault(); if (state.recording) stopRecording(); else beginRecording(state.editMode); }
   else if (e.code === 'KeyT') { e.preventDefault(); toggleTakesWindow(); }
+  else if (e.code === 'KeyM') { e.preventDefault(); const tr = selectedTrack(); if (tr) setMute(tr, !tr.muted); }
+  else if (e.code === 'KeyS') { e.preventDefault(); const tr = selectedTrack(); if (tr) setSolo(tr, !tr.soloed); }
+});
+
+// Unsaved-changes guard on window close.
+ipcRenderer.on('app-close-request', async () => {
+  const c = await confirmDiscard();
+  if (c === 'cancel') return;
+  if (c === 'save') { await saveProject(); if (state.dirty) return; }
+  ipcRenderer.send('do-close');
 });
 
 // Init
 setBpm(100); updatePlayIcon(); updateTitle();
 el.metroBtn.classList.toggle('active', state.metronomeOn);
 addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
-buildTracksDOM(); layout(); renderTakesWindow(); listDevices();
+buildTracksDOM(); layout(); renderTakesWindow(); listDevices(); clearDirty();
 navigator.mediaDevices.addEventListener('devicechange', listDevices);
 window.addEventListener('resize', () => { layout(); renderTakesWindow(); });
 setTimeout(() => el.splash && el.splash.classList.add('hide'), 1150);

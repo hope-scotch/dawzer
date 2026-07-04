@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 let mainWindow;
+let forceClose = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -23,7 +24,30 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
   mainWindow.setMenuBarVisibility(false);
+
+  // Ask the renderer before actually closing (for unsaved-changes warning).
+  mainWindow.on('close', (e) => {
+    if (forceClose) return;
+    e.preventDefault();
+    mainWindow.webContents.send('app-close-request');
+  });
 }
+
+// Renderer decided it's ok to close.
+ipcMain.on('do-close', () => { forceClose = true; if (mainWindow) mainWindow.close(); });
+
+// Three-way unsaved-changes prompt.
+ipcMain.handle('confirm-unsaved', async () => {
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0, cancelId: 2,
+    title: 'Unsaved changes',
+    message: 'You have unsaved changes.',
+    detail: 'Do you want to save your project before continuing?'
+  });
+  return response; // 0 = Save, 1 = Don't Save, 2 = Cancel
+});
 
 app.whenReady().then(() => {
   createWindow();
