@@ -304,6 +304,15 @@ input[type="checkbox"]:checked::after { content: ""; position: absolute; left: 6
 .set-row select { padding: 10px 30px 10px 12px; }
 .mfield select { background-position: right 6px center; padding-right: 20px; }
 
+/* Focus rings — green to match the theme (no default yellow/blue) */
+select:focus, input:focus, button:focus, .tbtn:focus, [tabindex]:focus { outline: none; }
+select:focus-visible, input[type="text"]:focus-visible, .track-rename:focus-visible,
+.set-row select:focus, .mfield select:focus, .field-chip select:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(156,176,128,.22);
+}
+input[type="checkbox"]:focus-visible { box-shadow: 0 0 0 3px rgba(156,176,128,.28); }
+input[type="range"]:focus { outline: none; }
+
 /* ---------- Premium range sliders ---------- */
 input[type="range"].slider { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; margin: 0; }
 input[type="range"].slider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px;
