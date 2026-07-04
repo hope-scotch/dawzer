@@ -189,7 +189,7 @@ body {
 }
 .brand-word { font-weight: 700; font-size: 18px; letter-spacing: 1.5px; color: #dfeacf; }
 .brand-img { height: 27px; display: block; }
-.splash-img { height: 118px; display: block; filter: drop-shadow(0 4px 14px rgba(0,0,0,.5)); }
+.splash-img { height: 104px; display: block; animation: breathe 1.5s ease-in-out infinite; }
 
 /* ---------- Loading splash ---------- */
 .splash {
@@ -200,10 +200,19 @@ body {
 .splash.hide { opacity: 0; pointer-events: none; }
 .splash-logo { display: flex; align-items: center; gap: 12px; font-family: 'Poppins', sans-serif;
   animation: logoIn 700ms cubic-bezier(.2,.8,.2,1) both; }
-.splash .brand-badge { width: 86px; height: 86px; border-radius: 20px; font-size: 56px; border-width: 2px; }
-.splash .brand-word { font-size: 56px; letter-spacing: 4px; }
-.splash-tag { position: absolute; bottom: 15%; color: var(--muted); font-family: 'Poppins', sans-serif; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; animation: logoIn 900ms 120ms cubic-bezier(.2,.8,.2,1) both; }
 @keyframes logoIn { from { opacity: 0; transform: translateY(14px) scale(.96); } to { opacity: 1; transform: none; } }
+
+/* animated loader: spinning ring + breathing, glowing D mark */
+.loader { position: relative; width: 210px; height: 210px; display: flex; align-items: center; justify-content: center; animation: logoIn 480ms ease both; }
+.loader-ring { position: absolute; width: 176px; height: 176px; border-radius: 50%;
+  border: 3px solid rgba(156,176,128,.14); border-top-color: var(--accent); border-right-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: spin 1.05s cubic-bezier(.5,.15,.4,.85) infinite; }
+.loader-ring::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; box-shadow: 0 0 22px rgba(156,176,128,.18); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes breathe {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 5px rgba(156,176,128,.25)); }
+  50% { transform: scale(1.07); filter: drop-shadow(0 0 22px rgba(156,176,128,.6)); }
+}
 
 /* ---------- Track selection ---------- */
 .lane-label.track { cursor: pointer; position: relative; transition: background 120ms; }

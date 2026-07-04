@@ -1021,4 +1021,4 @@ addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
 buildTracksDOM(); layout(); renderTakesWindow(); listDevices(); clearDirty();
 navigator.mediaDevices.addEventListener('devicechange', listDevices);
 window.addEventListener('resize', () => { layout(); renderTakesWindow(); });
-setTimeout(() => el.splash && el.splash.classList.add('hide'), 1150);
+setTimeout(() => el.splash && el.splash.classList.add('hide'), 1650);
