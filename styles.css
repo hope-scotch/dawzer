@@ -122,7 +122,7 @@ body {
 .timeline { position: relative; height: 100%; min-width: 100%; }
 
 .ruler { display: block; height: var(--RULER); width: 100%; border-bottom: 1px solid var(--border); background: var(--field); cursor: text; }
-.grid { position: absolute; top: var(--RULER); left: 0; z-index: 0; pointer-events: none; display: block; }
+.grid { position: absolute; top: calc(var(--RULER) + 1px); left: 0; z-index: 0; pointer-events: none; display: block; }
 #trackLanes { position: relative; z-index: 1; }
 .lane-body { position: relative; width: 100%; border-bottom: 1px solid var(--border); overflow: hidden; background: transparent; }
 .lane-body.track { height: var(--TRACK); }

@@ -429,27 +429,28 @@ function layout() {
 function drawRuler(px) {
   const c = el.rulerCanvas, h = RULER_H; c.width = px; c.height = h;
   const g = c.getContext('2d'); g.fillStyle = '#1c2628'; g.fillRect(0, 0, px, h);
-  g.font = "10px 'Lato', sans-serif"; g.lineWidth = 1;
+  g.font = "10px 'Lato', sans-serif"; g.lineWidth = 1; g.textBaseline = 'middle';
   const beats = bpb(), beatDur = 60 / state.bpm, barDur = beats * beatDur;
   const barPx = barDur * PPS, beatPx = beatDur * PPS;
-  const totalBars = Math.ceil(px / barPx) + 1;
-  // minor beat ticks (only when there's room)
-  if (beatPx >= 9) {
-    g.strokeStyle = '#2f3b37';
-    for (let bar = 0; bar < totalBars; bar++) for (let b = 1; b < beats; b++) {
-      const x = Math.round((bar * beats + b) * beatPx) + 0.5;
-      g.beginPath(); g.moveTo(x, h - 6); g.lineTo(x, h); g.stroke();
+  const totalBeats = Math.ceil(px / beatPx) + 1;
+  const labelBeats = beatPx >= 46;                 // room to label every beat "bar.beat"
+  let barEvery = 1; if (!labelBeats && barPx < 26) barEvery = Math.ceil(26 / barPx);
+  for (let gb = 0; gb <= totalBeats; gb++) {
+    const x = Math.round(gb * beatPx) + 0.5;
+    const isBar = gb % beats === 0;
+    const bar = Math.floor(gb / beats) + 1, beat = (gb % beats) + 1;
+    if (isBar || beatPx >= 9) {                     // skip beat ticks when too dense
+      g.strokeStyle = isBar ? '#4a5f57' : '#39473f';
+      g.beginPath(); g.moveTo(x, h - (isBar ? 15 : 8)); g.lineTo(x, h); g.stroke();
     }
-  }
-  // bar lines + numbers (centered on the line; thin labels out when zoomed far)
-  let every = 1; if (barPx < 26) every = Math.ceil(26 / barPx);
-  g.strokeStyle = '#4a5f57'; g.fillStyle = '#8fa596'; g.textBaseline = 'middle';
-  for (let bar = 0; bar <= totalBars; bar++) {
-    const x = Math.round(bar * barPx) + 0.5, labeled = bar % every === 0;
-    g.beginPath(); g.moveTo(x, h - (labeled ? 15 : 9)); g.lineTo(x, h); g.stroke();
-    if (labeled) {
-      if (bar === 0) { g.textAlign = 'left'; g.fillText('1', x + 4, 9); }
-      else { g.textAlign = 'center'; g.fillText(String(bar + 1), x, 9); }
+    if (labelBeats) {
+      g.fillStyle = isBar ? '#9fb28f' : '#6f8074';
+      g.textAlign = gb === 0 ? 'left' : 'center';
+      g.fillText(bar + '.' + beat, gb === 0 ? x + 4 : x, 9);
+    } else if (isBar && ((bar - 1) % barEvery === 0)) {
+      g.fillStyle = '#8fa596';
+      g.textAlign = gb === 0 ? 'left' : 'center';
+      g.fillText(String(bar), gb === 0 ? x + 4 : x, 9);
     }
   }
   g.textAlign = 'left'; g.textBaseline = 'alphabetic';
@@ -464,8 +465,10 @@ function drawGrid(px) {
   // faint alternate-bar shading
   g.fillStyle = 'rgba(255,255,255,.014)';
   for (let bar = 0; bar <= Math.ceil(px / barPx); bar++) if (bar % 2 === 1) g.fillRect(Math.round(bar * barPx), 0, Math.max(1, Math.round(barPx)), h);
-  // finest subdivision (per beat) chosen by zoom: 16th → 8th → beat → bars
-  let div = 0; if (beatPx >= 12) div = 1; if (beatPx / 2 >= 14) div = 2; if (beatPx / 4 >= 14) div = 4;
+  // finest subdivision (per beat) chosen by zoom: 64th → 32nd → 16th → 8th → beat → bars
+  let div = 0;
+  if (beatPx >= 12) div = 1; if (beatPx / 2 >= 14) div = 2; if (beatPx / 4 >= 14) div = 4;
+  if (beatPx / 8 >= 14) div = 8; if (beatPx / 16 >= 14) div = 16;
   g.lineWidth = 1;
   if (div >= 1) {
     const subPx = beatPx / div, totalSubs = Math.ceil(px / subPx) + 1;
