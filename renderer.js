@@ -20,8 +20,8 @@ const SVG_TRASH = '<svg viewBox="0 0 24 24" class="icn xs"><path d="M4 7h16M9 7V
 // English tooltip bodies, keyed by the element's data-title. (data-tip holds Bengali.)
 const EN_BODY = {
   'Metronome': 'Toggle the click track on or off.',
-  'Record': 'Record a clip into the selected track (R). Edit mode overdubs from the playhead.',
-  'Edit Mode': 'When on, Record overdubs the clip under the playhead instead of adding a new one.',
+  'Record': 'Record a new take into the selected track (R). Edit mode overdubs from the playhead.',
+  'Edit Mode': 'When on, Record overdubs the current take instead of adding a new one.',
   'Play / Pause': 'Play or pause from the playhead. Spacebar also works.',
   'Stop': 'Stop recording or playback and return to the start.',
   'Tempo (BPM)': 'Hold the arrows, or drag the number up and down, to change the tempo.',
@@ -29,17 +29,18 @@ const EN_BODY = {
   'Count-in': 'Metronome bars before recording begins.',
   'Click Volume': 'Metronome click volume.',
   'Timeline': 'Playhead position / total length.',
-  'Takes': "Show the selected track's recordings.",
+  'Takes': "Show the selected track's takes.",
   'Test Output': 'Play a tone through the selected output device.',
   'Add Track': 'Add a new empty track.',
   'Load Track': 'Load an audio file into the selected track.',
   'Audio Setup': 'Choose input & output devices and the language.',
   'Zoom': 'Zoom the timeline: Ctrl + scroll, or pinch on a trackpad.',
   'Audio Clip': 'Drag the middle to move; drag the edges to resize. Right-click for options.',
-  'Take': 'Click to jump to this recording on the timeline.',
+  'Take': 'Click to show this take on the track.',
+  'Use': 'Make this the active take on the track.',
   'Export WAV': 'Save as a lossless WAV file.',
   'Export MP3': 'Save as a 192 kbps MP3 file.',
-  'Delete': 'Delete this recording.',
+  'Delete': 'Delete this take.',
   'Dawzer': 'A simple recording studio — record takes over a metronome.',
 };
 
@@ -185,8 +186,8 @@ function snap() {
   return {
     trackSeq: state.trackSeq, selectedTrackId: state.selectedTrackId,
     tracks: state.tracks.map((tr) => ({
-      id: tr.id, name: tr.name, color: tr.color, clipSeq: tr.clipSeq, selectedClipId: tr.selectedClipId,
-      clips: tr.clips.map((c) => ({ id: c.id, num: c.num, offset: c.offset, trimStart: c.trimStart, trimEnd: c.trimEnd, createdAt: c.createdAt, buffer: c.buffer })),
+      id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId,
+      takes: tr.takes.map((t) => ({ id: t.id, num: t.num, offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd, createdAt: t.createdAt, buffer: t.buffer })),
     })),
   };
 }
@@ -194,8 +195,8 @@ function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length >
 function restore(s) {
   state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
   state.tracks = s.tracks.map((t) => ({
-    id: t.id, name: t.name, color: t.color, clipSeq: t.clipSeq, selectedClipId: t.selectedClipId, els: null,
-    clips: t.clips.map((c) => ({ id: c.id, num: c.num, offset: c.offset, trimStart: c.trimStart, trimEnd: c.trimEnd, createdAt: c.createdAt, buffer: c.buffer, peaks: null, els: null })),
+    id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, els: null,
+    takes: t.takes.map((tk) => ({ id: tk.id, num: tk.num, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd, createdAt: tk.createdAt, buffer: tk.buffer, peaks: null })),
   }));
   buildTracksDOM(); layout(); renderTakesWindow();
 }
@@ -203,16 +204,16 @@ function undo() { if (!state.undoStack.length) { showToast('Nothing to undo'); r
 function redo() { if (!state.redoStack.length) { showToast('Nothing to redo'); return; } state.undoStack.push(snap()); restore(state.redoStack.pop()); showToast('Redo'); }
 
 // ===========================================================================
-// Track / clip model
+// Track / take model  (one active take shown per track)
 // ===========================================================================
 function selectedTrack() { return state.tracks.find((t) => t.id === state.selectedTrackId) || null; }
 function trackById(id) { return state.tracks.find((t) => t.id === id) || null; }
-function visDur(c) { return c.trimEnd - c.trimStart; }
-function clipEnd(c) { return c.offset + visDur(c); }
+function activeTake(tr) { return tr ? (tr.takes.find((t) => t.id === tr.activeTakeId) || null) : null; }
+function visDur(t) { return t.trimEnd - t.trimStart; }
 
 function addTrack(silent) {
   state.trackSeq++;
-  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], clips: [], clipSeq: 0, selectedClipId: null, els: null };
+  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], takeSeq: 0, activeTakeId: null, els: null };
   state.tracks.push(tr);
   state.selectedTrackId = tr.id;
   buildTracksDOM();
@@ -227,23 +228,22 @@ function deleteTrack(id) {
   buildTracksDOM(); layout(); renderTakesWindow();
 }
 function selectTrack(id) { if (state.selectedTrackId !== id) { state.selectedTrackId = id; updateSelectionUI(); renderTakesWindow(); } }
-function selectClip(tr, clipId) { state.selectedTrackId = tr.id; tr.selectedClipId = clipId; updateSelectionUI(); renderTakesWindow(); }
-function addClip(tr, buffer, offset) {
-  tr.clipSeq++;
-  const c = { id: ++idCounter, num: tr.clipSeq, offset: Math.max(0, offset || 0), buffer, peaks: null, trimStart: 0, trimEnd: buffer.duration, createdAt: new Date(), els: null };
-  tr.clips.push(c); tr.selectedClipId = c.id;
-  return c;
+function addTake(tr, buffer, offset) {
+  tr.takeSeq++;
+  const t = { id: ++idCounter, num: tr.takeSeq, buffer, peaks: null, offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, createdAt: new Date() };
+  tr.takes.push(t); tr.activeTakeId = t.id;
+  return t;
 }
-function removeClip(tr, clipId) {
+function setActiveTake(tr, takeId) { pushUndo(); tr.activeTakeId = takeId; renderTrack(tr); updateSelectionUI(); renderTakesWindow(); layout(); }
+function removeTake(tr, takeId) {
   pushUndo();
-  tr.clips = tr.clips.filter((c) => c.id !== clipId);
-  if (tr.selectedClipId === clipId) tr.selectedClipId = tr.clips.length ? tr.clips[tr.clips.length - 1].id : null;
-  renderTrackClips(tr); layout(); renderTakesWindow();
+  tr.takes = tr.takes.filter((t) => t.id !== takeId);
+  if (tr.activeTakeId === takeId) tr.activeTakeId = tr.takes.length ? tr.takes[tr.takes.length - 1].id : null;
+  renderTrack(tr); layout(); renderTakesWindow();
 }
-function clipUnderPlayhead(tr) { return tr.clips.find((c) => state.playhead >= c.offset - 0.001 && state.playhead < clipEnd(c) + 0.001) || null; }
 
 // ===========================================================================
-// Track / clip DOM
+// Track DOM (one clip element per track for its active take)
 // ===========================================================================
 function buildTracksDOM() {
   el.trackLabels.innerHTML = ''; el.trackLanes.innerHTML = '';
@@ -258,47 +258,45 @@ function buildTracksDOM() {
 
     const body = document.createElement('div');
     body.className = 'lane-body track'; body.dataset.track = tr.id; body.style.setProperty('--tc', tr.color);
-    body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
-    body.addEventListener('contextmenu', (e) => { if (e.target.closest('.clip')) return; e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
-
-    el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
-    tr.els = { label, body, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
-    renderTrackClips(tr);
-  });
-  updateSelectionUI(); updatePlayheadHeight();
-}
-function renderTrackClips(tr) {
-  if (!tr.els) return;
-  const body = tr.els.body;
-  body.querySelectorAll('.clip:not(.rec-temp)').forEach((n) => n.remove());
-  tr.clips.forEach((clip) => {
-    const clipEl = document.createElement('div');
-    clipEl.className = 'clip';
-    clipEl.setAttribute('data-title', 'Audio Clip');
-    clipEl.setAttribute('data-tip', 'মাঝখান টেনে সরান; দুই প্রান্ত টেনে ছোট/বড় করুন। ডান-ক্লিকে অপশন।');
+    const clip = document.createElement('div');
+    clip.className = 'clip hidden';
+    clip.setAttribute('data-title', 'Audio Clip');
+    clip.setAttribute('data-tip', 'মাঝখান টেনে সরান; দুই প্রান্ত টেনে ছোট/বড় করুন। ডান-ক্লিকে অপশন।');
     const trimL = document.createElement('div'); trimL.className = 'trim left';
     const trimR = document.createElement('div'); trimR.className = 'trim right';
     const canvas = document.createElement('canvas');
-    clipEl.appendChild(trimL); clipEl.appendChild(canvas); clipEl.appendChild(trimR);
-    body.appendChild(clipEl);
-    clip.els = { clipEl, canvas, trimL, trimR };
-    clipEl.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.trim')) return; e.stopPropagation(); moveClip(e, tr, clip); });
-    trimL.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); trimClip(e, tr, clip, 'l'); });
-    trimR.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); trimClip(e, tr, clip, 'r'); });
-    clipEl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); selectClip(tr, clip.id); showClipMenu(e, tr, clip); });
-    positionClip(tr, clip);
+    clip.appendChild(trimL); clip.appendChild(canvas); clip.appendChild(trimR);
+    body.appendChild(clip);
+
+    el.trackLabels.appendChild(label); el.trackLanes.appendChild(body);
+    tr.els = { label, body, clip, canvas, trimL, trimR, title: label.querySelector('.ll-title'), rec: label.querySelector('.ll-rec') };
+
+    body.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.clip')) return; selectTrack(tr.id); timelineDown(e); });
+    body.addEventListener('contextmenu', (e) => { if (e.target.closest('.clip')) return; e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
+    clip.addEventListener('pointerdown', (e) => { if (e.button !== 0 || e.target.closest('.trim')) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) moveTake(e, tr, tk); });
+    trimL.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimTake(e, tr, tk, 'l'); });
+    trimR.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); const tk = activeTake(tr); if (tk) trimTake(e, tr, tk, 'r'); });
+    clip.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); selectTrack(tr.id); showTrackMenu(e, tr); });
+
+    renderTrack(tr);
   });
-  highlightClips(tr);
+  updateSelectionUI(); updatePlayheadHeight();
 }
-function positionClip(tr, clip) {
-  const { clipEl, canvas } = clip.els; const vd = visDur(clip), w = Math.max(4, Math.round(vd * PPS));
-  clipEl.style.left = Math.round(clip.offset * PPS) + 'px'; clipEl.style.width = w + 'px';
-  clipEl.style.borderColor = tr.color; clipEl.style.background = 'color-mix(in srgb, ' + tr.color + ' 22%, #223230)';
-  if (!clip.peaks) clip.peaks = computePeaks(clip.buffer, PPS);
-  drawPeaksRange(canvas, clip.peaks, WAVE_H, tr.color, Math.floor(clip.trimStart * PPS), Math.ceil(clip.trimEnd * PPS));
+function renderTrack(tr) {
+  if (!tr.els) return;
+  const { clip, canvas, title } = tr.els;
+  title.textContent = tr.name;
+  if (state.recording && state.recTrackId === tr.id) { clip.classList.add('hidden'); return; }
+  const tk = activeTake(tr);
+  if (!tk) { clip.classList.add('hidden'); return; }
+  clip.classList.remove('hidden');
+  const vd = visDur(tk), w = Math.max(4, Math.round(vd * PPS));
+  clip.style.left = Math.round(tk.offset * PPS) + 'px'; clip.style.width = w + 'px';
+  clip.style.borderColor = tr.color; clip.style.background = 'color-mix(in srgb, ' + tr.color + ' 22%, #223230)';
+  if (!tk.peaks) tk.peaks = computePeaks(tk.buffer, PPS);
+  drawPeaksRange(canvas, tk.peaks, WAVE_H, tr.color, Math.floor(tk.trimStart * PPS), Math.ceil(tk.trimEnd * PPS));
   canvas.style.width = w + 'px'; canvas.style.height = WAVE_H + 'px';
 }
-function highlightClips(tr) { tr.clips.forEach((c) => c.els && c.els.clipEl.classList.toggle('selected', tr.selectedClipId === c.id && tr.id === state.selectedTrackId)); }
 function updateSelectionUI() {
   state.tracks.forEach((tr) => {
     if (!tr.els) return;
@@ -306,27 +304,26 @@ function updateSelectionUI() {
     tr.els.label.classList.toggle('selected', sel);
     tr.els.body.classList.toggle('selected', sel);
     tr.els.rec.classList.toggle('hidden', !sel);
-    highlightClips(tr);
   });
 }
 function updatePlayheadHeight() { el.playhead.style.height = (RULER_H + state.tracks.length * TRACK_H) + 'px'; }
 
-// ---- clip interactions ----
-function moveClip(e, tr, clip) {
-  selectClip(tr, clip.id); pushUndo();
-  const d = { x: e.clientX, off: clip.offset };
-  const move = (ev) => { clip.offset = Math.max(0, d.off + (ev.clientX - d.x) / PPS); positionClip(tr, clip); renderPlayhead(); };
+// ---- clip interactions (active take) ----
+function moveTake(e, tr, tk) {
+  selectTrack(tr.id); pushUndo();
+  const d = { x: e.clientX, off: tk.offset };
+  const move = (ev) => { tk.offset = Math.max(0, d.off + (ev.clientX - d.x) / PPS); renderTrack(tr); renderPlayhead(); };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 }
-function trimClip(e, tr, clip, side) {
-  selectClip(tr, clip.id); pushUndo();
-  const d = { x: e.clientX, ts: clip.trimStart, te: clip.trimEnd, off: clip.offset };
+function trimTake(e, tr, tk, side) {
+  selectTrack(tr.id); pushUndo();
+  const d = { x: e.clientX, ts: tk.trimStart, te: tk.trimEnd, off: tk.offset };
   const move = (ev) => {
     const dx = (ev.clientX - d.x) / PPS;
-    if (side === 'l') { let nts = Math.min(Math.max(0, d.ts + dx), clip.trimEnd - 0.05); const ap = nts - d.ts; clip.trimStart = nts; clip.offset = Math.max(0, d.off + ap); }
-    else { clip.trimEnd = Math.min(clip.buffer.duration, Math.max(clip.trimStart + 0.05, d.te + dx)); }
-    positionClip(tr, clip); renderPlayhead();
+    if (side === 'l') { let nts = Math.min(Math.max(0, d.ts + dx), tk.trimEnd - 0.05); const ap = nts - d.ts; tk.trimStart = nts; tk.offset = Math.max(0, d.off + ap); }
+    else { tk.trimEnd = Math.min(tk.buffer.duration, Math.max(tk.trimStart + 0.05, d.te + dx)); }
+    renderTrack(tr); renderPlayhead();
   };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); layout(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -338,32 +335,27 @@ async function loadFileInto(tr) {
   try {
     const buf = await ctx().decodeAudioData(res.data.slice(0));
     pushUndo();
-    addClip(tr, buf, state.playhead);
-    selectTrack(tr.id); renderTrackClips(tr); layout(); renderTakesWindow();
+    addTake(tr, buf, state.playhead);
+    selectTrack(tr.id); renderTrack(tr); layout(); renderTakesWindow();
     showToast(`Loaded into ${tr.name}`);
   } catch (e) { console.error(e); showToast('Could not decode that file'); }
 }
 function loadIntoSelected() { let tr = selectedTrack(); if (!tr) tr = addTrack(true); loadFileInto(tr); }
 
 // ===========================================================================
-// Context menus
+// Context menu
 // ===========================================================================
 function menuItem(m, label, fn, cls) { const it = document.createElement('div'); it.className = 'ctx-item' + (cls ? ' ' + cls : ''); it.textContent = label; it.onclick = () => { hideCtx(); fn(); }; m.appendChild(it); }
-function placeMenu(e) { const m = el.ctxMenu; m.classList.remove('hidden'); const mw = m.offsetWidth, mh = m.offsetHeight; m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px'; m.style.top = Math.min(e.clientY, window.innerHeight - mh - 6) + 'px'; }
 function showTrackMenu(e, tr) {
   const m = el.ctxMenu; m.innerHTML = '';
   menuItem(m, 'Load audio into track…', () => loadFileInto(tr));
+  if (activeTake(tr)) menuItem(m, 'Remove current take', () => removeTake(tr, tr.activeTakeId));
   const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
   menuItem(m, 'Delete track', () => deleteTrack(tr.id), 'danger');
-  placeMenu(e);
-}
-function showClipMenu(e, tr, clip) {
-  const m = el.ctxMenu; m.innerHTML = '';
-  menuItem(m, 'Export WAV…', () => exportClip(clip, 'wav', tr));
-  menuItem(m, 'Export MP3…', () => exportClip(clip, 'mp3', tr));
-  const sep = document.createElement('div'); sep.className = 'ctx-sep'; m.appendChild(sep);
-  menuItem(m, 'Delete clip', () => removeClip(tr, clip.id), 'danger');
-  placeMenu(e);
+  m.classList.remove('hidden');
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  m.style.left = Math.min(e.clientX, window.innerWidth - mw - 6) + 'px';
+  m.style.top = Math.min(e.clientY, window.innerHeight - mh - 6) + 'px';
 }
 function hideCtx() { el.ctxMenu.classList.add('hidden'); }
 
@@ -372,16 +364,16 @@ function hideCtx() { el.ctxMenu.classList.add('hidden'); }
 // ===========================================================================
 function contentDuration() {
   let d = MIN_DURATION;
-  state.tracks.forEach((tr) => tr.clips.forEach((c) => { d = Math.max(d, clipEnd(c)); }));
+  state.tracks.forEach((tr) => { const tk = activeTake(tr); if (tk) d = Math.max(d, tk.offset + visDur(tk)); });
   if (state.recording) d = Math.max(d, state.playhead + 1);
   return d;
 }
-function invalidatePeaks() { state.tracks.forEach((tr) => tr.clips.forEach((c) => (c.peaks = null))); }
+function invalidatePeaks() { state.tracks.forEach((tr) => tr.takes.forEach((t) => (t.peaks = null))); }
 function layout() {
   const px = Math.ceil(contentDuration() * PPS);
   el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px';
   drawRuler(px);
-  if (!state.recording) state.tracks.forEach(renderTrackClips);
+  if (!state.recording) state.tracks.forEach(renderTrack);
   updatePlayheadHeight();
   renderPlayhead();
 }
@@ -448,16 +440,16 @@ function stopMetronome() { state.metroRunning = false; if (state.timerId) { clea
 // Playback
 // ===========================================================================
 function stopSources() { state.playSources.forEach((s) => { try { s.stop(); } catch (_) {} }); state.playSources = []; }
-function scheduleClip(clip, head, ctxStart) {
-  const start = clip.offset, vd = visDur(clip), end = start + vd;
+function scheduleTake(tk, head, ctxStart) {
+  const start = tk.offset, vd = visDur(tk), end = start + vd;
   if (end <= head) return;
-  const s = state.ctx.createBufferSource(); s.buffer = clip.buffer; s.connect(state.tracksGain);
-  if (head <= start) s.start(ctxStart + (start - head), clip.trimStart, vd);
-  else { const into = head - start; s.start(ctxStart, clip.trimStart + into, vd - into); }
+  const s = state.ctx.createBufferSource(); s.buffer = tk.buffer; s.connect(state.tracksGain);
+  if (head <= start) s.start(ctxStart + (start - head), tk.trimStart, vd);
+  else { const into = head - start; s.start(ctxStart, tk.trimStart + into, vd - into); }
   state.playSources.push(s);
 }
 function scheduleAll(head, ctxStart, exceptTrackId) {
-  state.tracks.forEach((tr) => { if (tr.id === exceptTrackId) return; tr.clips.forEach((c) => scheduleClip(c, head, ctxStart)); });
+  state.tracks.forEach((tr) => { if (tr.id === exceptTrackId) return; const tk = activeTake(tr); if (tk) scheduleTake(tk, head, ctxStart); });
 }
 function startPlayback() {
   const c = ctx(); applyOutput(); stopSources();
@@ -485,13 +477,14 @@ function updatePlayIcon() { el.playPauseBtn.innerHTML = state.playing ? ICON_PAU
 async function beginRecording(editing) {
   if (state.recording) return;
   let tr = selectedTrack(); if (!tr) tr = addTrack(true);
+  if (editing && !activeTake(tr)) editing = false;
   ctx(); await applyOutput();
   try { await openInput(); } catch (e) { console.error(e); showToast('Cannot open input device'); return; }
 
   state.recording = true; state.editing = editing; state.recTrackId = tr.id;
   state.recStartHead = state.playhead; state.livePeaks = [];
   el.recordBtn.classList.add('armed');
-  // temp recording clip element
+  tr.els.clip.classList.add('hidden');
   const recEl = document.createElement('div'); recEl.className = 'clip rec-temp recording';
   const canvas = document.createElement('canvas'); recEl.appendChild(canvas); tr.els.body.appendChild(recEl);
   state.recEl = { recEl, canvas };
@@ -547,25 +540,22 @@ async function finalizeRecording() {
   el.recordBtn.classList.remove('armed');
   const editing = state.editing, tr = trackById(state.recTrackId); state.editing = false; state.recording = false;
   if (state.recEl) { state.recEl.recEl.remove(); state.recEl = null; }
-  if (!state.recChunks || !state.recChunks.length) { if (tr) renderTrackClips(tr); showToast('Nothing captured'); return; }
+  if (!state.recChunks || !state.recChunks.length) { if (tr) renderTrack(tr); showToast('Nothing captured'); return; }
   const blob = new Blob(state.recChunks, { type: state.recorder.mimeType });
   let recBuf; try { recBuf = await ctx().decodeAudioData((await blob.arrayBuffer()).slice(0)); } catch (e) { console.error('decode', e); showToast('Decode failed'); return; }
   if (!tr) return;
   pushUndo();
-  const under = clipUnderPlayheadAt(tr, state.recStartHead);
-  if (editing && under) {
-    const keep = Math.max(0, state.recStartHead - under.offset);
-    under.buffer = concatBuffers(ctx(), under.buffer, keep, recBuf); under.trimStart = 0; under.trimEnd = under.buffer.duration; under.peaks = null;
-    tr.selectedClipId = under.id;
-    showToast(`Overdubbed ${tr.name} · clip #${under.num}`);
+  const act = activeTake(tr);
+  if (editing && act) {
+    const keep = Math.max(0, state.recStartHead - act.offset);
+    act.buffer = concatBuffers(ctx(), act.buffer, keep, recBuf); act.trimStart = 0; act.trimEnd = act.buffer.duration; act.peaks = null;
+    showToast(`Overdubbed ${tr.name} · Take ${act.num}`);
   } else {
-    const overlaps = tr.clips.some((c) => state.recStartHead < clipEnd(c) && state.recStartHead + recBuf.duration > c.offset);
-    const clip = addClip(tr, recBuf, state.recStartHead);
-    showToast(overlaps ? `Recorded (overlaps an existing clip — both kept)` : `${tr.name} · clip #${clip.num} recorded`);
+    const tk = addTake(tr, recBuf, state.recStartHead);
+    showToast(`${tr.name} · Take ${tk.num} recorded`);
   }
-  state.playhead = state.recStartHead; renderTrackClips(tr); layout(); renderTakesWindow();
+  state.playhead = state.recStartHead; renderTrack(tr); layout(); renderTakesWindow();
 }
-function clipUnderPlayheadAt(tr, t) { return tr.clips.find((c) => t >= c.offset - 0.001 && t < clipEnd(c) + 0.001) || null; }
 function concatBuffers(c, a, keepSeconds, b) {
   const sr = a.sampleRate, keep = Math.max(0, Math.min(a.length, Math.floor(keepSeconds * sr))), numCh = Math.max(a.numberOfChannels, b.numberOfChannels);
   const out = c.createBuffer(numCh, keep + b.length, sr);
@@ -579,32 +569,34 @@ function concatBuffers(c, a, keepSeconds, b) {
 }
 
 // ===========================================================================
-// Takes drawer (selected track's clips)
+// Takes drawer (selected track's takes; one active)
 // ===========================================================================
 function renderTakesWindow() {
   const tr = selectedTrack();
   el.tpTrack.textContent = tr ? tr.name : '';
   el.tpBody.innerHTML = '';
-  if (!tr || !tr.clips.length) { el.tpBody.innerHTML = '<div class="tw-empty">No recordings on this track yet.</div>'; return; }
-  [...tr.clips].sort((a, b) => b.num - a.num).forEach((clip) => {
+  if (!tr || !tr.takes.length) { el.tpBody.innerHTML = '<div class="tw-empty">No takes on this track yet.</div>'; return; }
+  [...tr.takes].sort((a, b) => b.num - a.num).forEach((take) => {
     const item = document.createElement('div');
-    item.className = 'take-item' + (clip.id === tr.selectedClipId ? ' current' : '');
-    item.setAttribute('data-title', 'Take'); item.setAttribute('data-tip', 'ক্লিক করে টাইমলাইনে এই রেকর্ডিং-এ যান।');
+    item.className = 'take-item' + (take.id === tr.activeTakeId ? ' current' : '');
+    item.setAttribute('data-title', 'Take'); item.setAttribute('data-tip', 'ক্লিক করে এই টেকটি ট্র্যাকে দেখান।');
     item.innerHTML = `
-      <div class="take-num">#${clip.num}</div>
-      <div class="take-mini"><canvas></canvas><div class="take-meta">${fmt(visDur(clip))} · @ ${fmt(clip.offset)}</div></div>
+      <div class="take-num">#${take.num}</div>
+      <div class="take-mini"><canvas></canvas><div class="take-meta">${fmt(visDur(take))} · @ ${fmt(take.offset)}</div></div>
       <div class="take-ctrls">
+        <button data-a="use" data-title="Use" data-tip="এই টেকটি ট্র্যাকে সক্রিয় করুন।">Use</button>
         <button data-a="wav" data-title="Export WAV" data-tip="লসলেস WAV হিসেবে সেভ করুন।">WAV</button>
         <button data-a="mp3" data-title="Export MP3" data-tip="১৯২ kbps MP3 হিসেবে সেভ করুন।">MP3</button>
-        <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই রেকর্ডিং মুছে ফেলুন।">${SVG_TRASH}</button>
+        <button data-a="del" class="icon-only" data-title="Delete" data-tip="এই টেকটি মুছে ফেলুন।">${SVG_TRASH}</button>
       </div>`;
-    item.onclick = (e) => { if (!e.target.closest('button')) { selectClip(tr, clip.id); el.timelineScroll.scrollLeft = clip.offset * PPS - 60; } };
-    item.querySelector('[data-a="wav"]').onclick = () => exportClip(clip, 'wav', tr);
-    item.querySelector('[data-a="mp3"]').onclick = () => exportClip(clip, 'mp3', tr);
-    item.querySelector('[data-a="del"]').onclick = () => removeClip(tr, clip.id);
+    item.onclick = (e) => { if (!e.target.closest('button')) setActiveTake(tr, take.id); };
+    item.querySelector('[data-a="use"]').onclick = () => setActiveTake(tr, take.id);
+    item.querySelector('[data-a="wav"]').onclick = () => exportTake(take, 'wav', tr);
+    item.querySelector('[data-a="mp3"]').onclick = () => exportTake(take, 'mp3', tr);
+    item.querySelector('[data-a="del"]').onclick = () => removeTake(tr, take.id);
     el.tpBody.appendChild(item);
-    if (!clip.peaks) clip.peaks = computePeaks(clip.buffer, PPS);
-    requestAnimationFrame(() => drawMini(item.querySelector('canvas'), clip.peaks, tr.color));
+    if (!take.peaks) take.peaks = computePeaks(take.buffer, PPS);
+    requestAnimationFrame(() => drawMini(item.querySelector('canvas'), take.peaks, tr.color));
   });
 }
 function toggleTakesWindow(force) {
@@ -618,19 +610,18 @@ function toggleTakesWindow(force) {
 // ===========================================================================
 // Export
 // ===========================================================================
-function trimmedBuffer(clip) {
-  // Render only the visible (trimmed) region for export.
-  const b = clip.buffer, sr = b.sampleRate;
-  const s = Math.floor(clip.trimStart * sr), e = Math.min(b.length, Math.floor(clip.trimEnd * sr));
+function trimmedBuffer(tk) {
+  const b = tk.buffer, sr = b.sampleRate;
+  const s = Math.floor(tk.trimStart * sr), e = Math.min(b.length, Math.floor(tk.trimEnd * sr));
   const len = Math.max(1, e - s), out = ctx().createBuffer(b.numberOfChannels, len, sr);
   for (let ch = 0; ch < b.numberOfChannels; ch++) { const src = b.getChannelData(ch), dst = out.getChannelData(ch); for (let i = 0; i < len; i++) dst[i] = src[s + i] || 0; }
   return out;
 }
-async function exportClip(clip, format, tr) {
+async function exportTake(take, format, tr) {
   showToast(`Exporting ${format.toUpperCase()}…`);
-  const buf = trimmedBuffer(clip);
+  const buf = trimmedBuffer(take);
   const bytes = format === 'wav' ? encodeWav(buf) : encodeMp3(buf);
-  const base = `${(tr ? tr.name : 'Clip').replace(/\s+/g, '_')}_clip${clip.num}`;
+  const base = `${(tr ? tr.name : 'Take').replace(/\s+/g, '_')}_take${take.num}`;
   const res = await ipcRenderer.invoke('save-file', { defaultName: `${base}.${format}`, data: bytes });
   showToast(res.ok ? 'Exported' : 'Cancelled');
 }
@@ -737,7 +728,7 @@ document.addEventListener('pointerdown', (e) => { clearTimeout(tipTimer); hideTi
 // ===========================================================================
 el.metroBtn.onclick = () => { if (state.metroRunning) { stopMetronome(); el.metroBtn.classList.remove('active'); } else { el.metroBtn.classList.add('active'); startMetronome(0, null); } };
 el.recordBtn.onclick = () => { if (state.recording) stopRecording(); else beginRecording(state.editMode); };
-el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs the clip under the playhead' : 'Edit mode off'); };
+el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs the current take' : 'Edit mode off'); };
 el.playPauseBtn.onclick = () => { state.playing ? pausePlayback() : startPlayback(); };
 el.stopBtn.onclick = () => { if (state.recording) stopRecording(); else { pausePlayback(); seek(0, false); } };
 el.takesBtn.onclick = () => toggleTakesWindow();
