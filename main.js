@@ -59,3 +59,28 @@ ipcMain.handle('open-audio', async () => {
   const data = fs.readFileSync(filePath);
   return { ok: true, filePath, name: path.basename(filePath), data: data.buffer };
 });
+
+// Save a project file (.dawzer) — audio + arrangement bundled together.
+ipcMain.handle('save-project', async (event, { defaultName, data }) => {
+  const docs = app.getPath('documents');
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save project',
+    defaultPath: path.join(docs, defaultName || 'Untitled.dawzer'),
+    filters: [{ name: 'Dawzer Project', extensions: ['dawzer'] }]
+  });
+  if (canceled || !filePath) return { ok: false };
+  fs.writeFileSync(filePath, Buffer.from(data));
+  return { ok: true, filePath, name: path.basename(filePath) };
+});
+
+// Open a project file (.dawzer).
+ipcMain.handle('open-project', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open project',
+    properties: ['openFile'],
+    filters: [{ name: 'Dawzer Project', extensions: ['dawzer'] }]
+  });
+  if (canceled || !filePaths.length) return { ok: false };
+  const data = fs.readFileSync(filePaths[0]);
+  return { ok: true, filePath: filePaths[0], name: path.basename(filePaths[0]), data: data.buffer };
+});

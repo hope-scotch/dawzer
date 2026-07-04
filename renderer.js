@@ -36,6 +36,9 @@ const EN_BODY = {
   'Audio Setup': 'Choose input & output devices and the language.',
   'Zoom': 'Zoom the timeline: Ctrl + scroll, or pinch on a trackpad.',
   'Track Volume': 'Volume of this track.',
+  'Mute': 'Silence this track.',
+  'Solo': 'Play only the soloed track(s).',
+  'Project': 'New, open, or save a project (Ctrl+N / Ctrl+O / Ctrl+S).',
   'Audio Clip': 'Drag the middle to move; drag the edges to resize. Right-click for options.',
   'Take': 'Click to show this take on the track.',
   'Use': 'Make this the active take on the track.',
@@ -51,7 +54,7 @@ const state = {
   monitor: false, monitorSource: null, monitorGain: null,
   lang: 'en',
 
-  bpm: 100, editMode: false,
+  bpm: 100, editMode: false, metronomeOn: true, projectName: 'Untitled',
   playhead: 0, playing: false, playStartCtx: 0, playStartHead: 0, raf: null,
 
   metroRunning: false, nextNoteTime: 0, beatCounter: 0, countInLeft: 0, timerId: null, onDownbeat: null,
@@ -72,7 +75,7 @@ const el = {};
 [
   'metroBtn','recordBtn','editBtn','playPauseBtn','stopBtn',
   'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
-  'clock','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
+  'clock','projectBtn','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
   'settingsModal','settingsClose','settingsBackdrop','inputDevice','outputDevice','monitorToggle','langSelect','refreshDevices','deviceStatus',
   'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
   'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
@@ -86,11 +89,14 @@ function ctx() {
   if (state.ctx.state === 'suspended') state.ctx.resume();
   return state.ctx;
 }
+function anySolo() { return state.tracks.some((t) => t.soloed); }
+function trackAudible(tr) { return !tr.muted && (!anySolo() || tr.soloed); }
 function trackGain(tr) {
   if (!tr.gainNode) { tr.gainNode = state.ctx.createGain(); tr.gainNode.connect(state.ctx.destination); }
-  tr.gainNode.gain.value = (tr.volume == null ? 1 : tr.volume);
+  tr.gainNode.gain.value = trackAudible(tr) ? (tr.volume == null ? 1 : tr.volume) : 0;
   return tr.gainNode;
 }
+function applyTrackGains() { state.tracks.forEach((tr) => { if (tr.gainNode) tr.gainNode.gain.value = trackAudible(tr) ? (tr.volume == null ? 1 : tr.volume) : 0; }); }
 async function applyOutput() {
   const c = ctx();
   if (typeof c.setSinkId === 'function') {
@@ -187,7 +193,7 @@ function snap() {
   return {
     trackSeq: state.trackSeq, selectedTrackId: state.selectedTrackId,
     tracks: state.tracks.map((tr) => ({
-      id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId, volume: tr.volume,
+      id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId, volume: tr.volume, muted: tr.muted, soloed: tr.soloed,
       takes: tr.takes.map((t) => ({ id: t.id, num: t.num, offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd, createdAt: t.createdAt, buffer: t.buffer })),
     })),
   };
@@ -196,7 +202,7 @@ function pushUndo() { state.undoStack.push(snap()); if (state.undoStack.length >
 function restore(s) {
   state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
   state.tracks = s.tracks.map((t) => ({
-    id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, volume: t.volume == null ? 1 : t.volume, gainNode: null, els: null,
+    id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, volume: t.volume == null ? 1 : t.volume, muted: !!t.muted, soloed: !!t.soloed, gainNode: null, els: null,
     takes: t.takes.map((tk) => ({ id: tk.id, num: tk.num, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd, createdAt: tk.createdAt, buffer: tk.buffer, peaks: null })),
   }));
   buildTracksDOM(); layout(); renderTakesWindow();
@@ -214,7 +220,7 @@ function visDur(t) { return t.trimEnd - t.trimStart; }
 
 function addTrack(silent) {
   state.trackSeq++;
-  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], takeSeq: 0, activeTakeId: null, volume: 1, gainNode: null, els: null };
+  const tr = { id: ++idCounter, name: `Track ${state.trackSeq}`, color: TRACK_COLORS[(state.trackSeq - 1) % TRACK_COLORS.length], takes: [], takeSeq: 0, activeTakeId: null, volume: 1, muted: false, soloed: false, gainNode: null, els: null };
   state.tracks.push(tr);
   state.selectedTrackId = tr.id;
   buildTracksDOM();
@@ -275,12 +281,20 @@ function buildTracksDOM() {
     const label = document.createElement('div');
     label.className = 'lane-label track'; label.style.setProperty('--tc', tr.color);
     label.innerHTML = `<div class="ll-row"><span class="swatch"></span><span class="ll-title"></span><span class="ll-rec hidden"><span class="dot"></span>REC</span></div>
-      <div class="ll-vol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg><input type="range" class="track-vol slider" min="0" max="1" step="0.01" data-title="Track Volume" data-tip="এই ট্র্যাকের ভলিউম।" /></div>`;
+      <div class="ll-ctrls">
+        <button class="ll-btn mute" data-title="Mute" data-tip="এই ট্র্যাক মিউট করুন।">M</button>
+        <button class="ll-btn solo" data-title="Solo" data-tip="শুধু এই ট্র্যাক শুনুন।">S</button>
+        <input type="range" class="track-vol slider" min="0" max="1" step="0.01" data-title="Track Volume" data-tip="এই ট্র্যাকের ভলিউম।" />
+      </div>`;
     label.querySelector('.swatch').style.background = tr.color;
     label.querySelector('.ll-title').textContent = tr.name;
+    const muteBtn = label.querySelector('.mute'); muteBtn.classList.toggle('on', !!tr.muted);
+    muteBtn.addEventListener('click', (e) => { e.stopPropagation(); tr.muted = !tr.muted; muteBtn.classList.toggle('on', tr.muted); applyTrackGains(); });
+    const soloBtn = label.querySelector('.solo'); soloBtn.classList.toggle('on', !!tr.soloed);
+    soloBtn.addEventListener('click', (e) => { e.stopPropagation(); tr.soloed = !tr.soloed; soloBtn.classList.toggle('on', tr.soloed); applyTrackGains(); });
     const volInput = label.querySelector('.track-vol');
     volInput.value = tr.volume == null ? 1 : tr.volume;
-    volInput.addEventListener('input', () => { tr.volume = parseFloat(volInput.value); if (tr.gainNode) tr.gainNode.gain.value = tr.volume; });
+    volInput.addEventListener('input', () => { tr.volume = parseFloat(volInput.value); applyTrackGains(); });
     styleRange(volInput);
     label.addEventListener('click', () => selectTrack(tr.id));
     label.addEventListener('contextmenu', (e) => { e.preventDefault(); selectTrack(tr.id); showTrackMenu(e, tr); });
@@ -459,7 +473,7 @@ function scheduler() {
   const c = state.ctx;
   while (state.nextNoteTime < c.currentTime + 0.12) {
     const beatInBar = state.beatCounter % bpb(), countin = state.countInLeft > 0;
-    click(state.nextNoteTime, beatInBar === 0, countin);
+    if (countin || state.metronomeOn) click(state.nextNoteTime, beatInBar === 0, countin);
     if (countin) { state.countInLeft--; if (state.countInLeft === 0 && state.onDownbeat) { const cb = state.onDownbeat; state.onDownbeat = null; cb(state.nextNoteTime + spb()); } }
     state.nextNoteTime += spb(); state.beatCounter++;
   }
@@ -473,6 +487,28 @@ function startMetronome(countInBars, onDownbeat) {
   scheduler();
 }
 function stopMetronome() { state.metroRunning = false; if (state.timerId) { clearTimeout(state.timerId); state.timerId = null; } state.onDownbeat = null; }
+
+// Metronome during playback — clicks aligned to the timeline grid, gated by the toggle.
+let metroTimer = null, metroBeat = 0;
+function startMetroPlayback() {
+  stopMetroPlayback();
+  if (!state.metronomeOn || !state.playing) return;
+  const sb = spb();
+  metroBeat = Math.max(0, Math.ceil(state.playStartHead / sb - 1e-6));
+  const tick = () => {
+    if (!state.playing) { stopMetroPlayback(); return; }
+    const now = state.ctx.currentTime, sbb = spb();
+    while (true) {
+      const T = metroBeat * sbb, ctxT = state.playStartCtx + (T - state.playStartHead);
+      if (ctxT > now + 0.2) break;
+      if (ctxT >= now - 0.03) { const bib = ((metroBeat % bpb()) + bpb()) % bpb(); click(ctxT, bib === 0, false); }
+      metroBeat++;
+    }
+    metroTimer = setTimeout(tick, 25);
+  };
+  tick();
+}
+function stopMetroPlayback() { if (metroTimer) { clearTimeout(metroTimer); metroTimer = null; } }
 
 // ===========================================================================
 // Playback
@@ -493,7 +529,7 @@ function startPlayback() {
   const c = ctx(); applyOutput(); stopSources();
   const ctxStart = c.currentTime + 0.06; state.playStartCtx = ctxStart; state.playStartHead = state.playhead;
   scheduleAll(state.playhead, ctxStart, null);
-  state.playing = true; updatePlayIcon(); tickPlayhead();
+  state.playing = true; updatePlayIcon(); startMetroPlayback(); tickPlayhead();
 }
 function tickPlayhead() {
   if (!state.playing) return;
@@ -504,7 +540,7 @@ function tickPlayhead() {
 function pausePlayback() {
   if (!state.playing) return;
   state.playhead = state.playStartHead + (state.ctx.currentTime - state.playStartCtx);
-  state.playing = false; stopSources(); if (state.raf) cancelAnimationFrame(state.raf); updatePlayIcon(); renderPlayhead();
+  state.playing = false; stopSources(); stopMetroPlayback(); if (state.raf) cancelAnimationFrame(state.raf); updatePlayIcon(); renderPlayhead();
 }
 function seek(seconds, keepPlaying) { state.playhead = Math.max(0, Math.min(seconds, contentDuration())); if (state.playing && keepPlaying) { stopSources(); startPlayback(); } renderPlayhead(); }
 function updatePlayIcon() { el.playPauseBtn.innerHTML = state.playing ? ICON_PAUSE : ICON_PLAY; el.playPauseBtn.classList.toggle('playing', state.playing); }
@@ -686,6 +722,86 @@ function encodeMp3(buffer) {
 function f2i(fa) { const o = new Int16Array(fa.length); for (let i = 0; i < fa.length; i++) { const s = Math.max(-1, Math.min(1, fa[i])); o[i] = s < 0 ? s * 0x8000 : s * 0x7FFF; } return o; }
 
 // ===========================================================================
+// Project management (save / open / new)
+// ===========================================================================
+function u8ToBase64(u8) { let s = ''; const chunk = 0x8000; for (let i = 0; i < u8.length; i += chunk) s += String.fromCharCode.apply(null, u8.subarray(i, i + chunk)); return btoa(s); }
+function base64ToU8(b64) { const s = atob(b64), u8 = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i); return u8; }
+function updateTitle() { document.title = 'Dawzer — ' + (state.projectName || 'Untitled'); }
+function serializeProject() {
+  return {
+    app: 'dawzer', version: 1,
+    bpm: state.bpm, beatsPerBar: el.beatsPerBar.value, countIn: el.countIn.value, clickVol: el.clickVol.value, metronomeOn: state.metronomeOn,
+    trackSeq: state.trackSeq, selectedIndex: state.tracks.findIndex((t) => t.id === state.selectedTrackId),
+    tracks: state.tracks.map((tr) => ({
+      name: tr.name, color: tr.color, volume: tr.volume, muted: tr.muted, soloed: tr.soloed,
+      takeSeq: tr.takeSeq, activeTakeNum: (activeTake(tr) ? activeTake(tr).num : null),
+      takes: tr.takes.map((tk) => ({ num: tk.num, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd,
+        createdAt: (tk.createdAt instanceof Date ? tk.createdAt.toISOString() : tk.createdAt), wav: u8ToBase64(encodeWav(tk.buffer)) })),
+    })),
+  };
+}
+async function saveProject() {
+  showToast('Saving…');
+  const bytes = new TextEncoder().encode(JSON.stringify(serializeProject()));
+  const res = await ipcRenderer.invoke('save-project', { defaultName: (state.projectName || 'Untitled') + '.dawzer', data: bytes });
+  if (res.ok) { state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle(); showToast('Project saved'); }
+  else showToast('Save cancelled');
+}
+async function openProject() {
+  const res = await ipcRenderer.invoke('open-project');
+  if (!res.ok) return;
+  try {
+    const p = JSON.parse(new TextDecoder().decode(new Uint8Array(res.data)));
+    await loadProject(p);
+    state.projectName = res.name.replace(/\.dawzer$/i, ''); updateTitle();
+    showToast('Project opened');
+  } catch (e) { console.error(e); showToast('Could not open project'); }
+}
+async function loadProject(p) {
+  const c = ctx();
+  if (p.bpm) setBpm(p.bpm);
+  if (p.beatsPerBar) el.beatsPerBar.value = p.beatsPerBar;
+  if (p.countIn != null) el.countIn.value = p.countIn;
+  if (p.clickVol != null) { el.clickVol.value = p.clickVol; styleRange(el.clickVol); }
+  state.metronomeOn = p.metronomeOn !== false; el.metroBtn.classList.toggle('active', state.metronomeOn);
+  state.trackSeq = p.trackSeq || (p.tracks ? p.tracks.length : 0);
+  const tracks = [];
+  for (const t of (p.tracks || [])) {
+    const tr = { id: ++idCounter, name: t.name, color: t.color, volume: t.volume == null ? 1 : t.volume, muted: !!t.muted, soloed: !!t.soloed, takeSeq: t.takeSeq || (t.takes ? t.takes.length : 0), activeTakeId: null, gainNode: null, els: null, takes: [] };
+    for (const tk of (t.takes || [])) {
+      let buf; try { buf = await c.decodeAudioData(base64ToU8(tk.wav).buffer.slice(0)); } catch (e) { console.warn('take decode', e); continue; }
+      const take = { id: ++idCounter, num: tk.num, buffer: buf, peaks: null, offset: tk.offset || 0, trimStart: tk.trimStart || 0, trimEnd: tk.trimEnd != null ? tk.trimEnd : buf.duration, createdAt: tk.createdAt ? new Date(tk.createdAt) : new Date() };
+      tr.takes.push(take);
+      if (tk.num === t.activeTakeNum) tr.activeTakeId = take.id;
+    }
+    if (!tr.activeTakeId && tr.takes.length) tr.activeTakeId = tr.takes[tr.takes.length - 1].id;
+    tracks.push(tr);
+  }
+  state.tracks = tracks;
+  if (!state.tracks.length) { addTrack(true); addTrack(true); }
+  state.selectedTrackId = state.tracks[Math.max(0, Math.min(state.tracks.length - 1, p.selectedIndex || 0))].id;
+  state.undoStack = []; state.redoStack = []; state.playhead = 0;
+  buildTracksDOM(); layout(); renderTakesWindow();
+}
+function newProject() {
+  if (state.recording) stopRecording(); if (state.playing) pausePlayback();
+  state.tracks = []; state.trackSeq = 0; state.selectedTrackId = null; state.undoStack = []; state.redoStack = []; state.playhead = 0;
+  addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
+  state.projectName = 'Untitled'; updateTitle();
+  buildTracksDOM(); layout(); renderTakesWindow(); showToast('New project');
+}
+function showProjectMenu(e) {
+  const m = el.ctxMenu; m.innerHTML = '';
+  menuItem(m, 'New project', () => newProject());
+  menuItem(m, 'Open project…', () => openProject());
+  menuItem(m, 'Save project…', () => saveProject());
+  m.classList.remove('hidden');
+  const mw = m.offsetWidth, mh = m.offsetHeight, r = e.currentTarget.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - mw - 6) + 'px';
+  m.style.top = Math.min(r.bottom + 4, window.innerHeight - mh - 6) + 'px';
+}
+
+// ===========================================================================
 // Test tone
 // ===========================================================================
 async function testOutput() {
@@ -772,13 +888,19 @@ document.addEventListener('pointerdown', (e) => { clearTimeout(tipTimer); hideTi
 // ===========================================================================
 // Wiring
 // ===========================================================================
-el.metroBtn.onclick = () => { if (state.metroRunning) { stopMetronome(); el.metroBtn.classList.remove('active'); } else { el.metroBtn.classList.add('active'); startMetronome(0, null); } };
+el.metroBtn.onclick = () => {
+  state.metronomeOn = !state.metronomeOn;
+  el.metroBtn.classList.toggle('active', state.metronomeOn);
+  if (state.playing) { state.metronomeOn ? startMetroPlayback() : stopMetroPlayback(); }
+  showToast(state.metronomeOn ? 'Metronome on' : 'Metronome off');
+};
 el.recordBtn.onclick = () => { if (state.recording) stopRecording(); else beginRecording(state.editMode); };
 el.editBtn.onclick = () => { state.editMode = !state.editMode; el.editBtn.classList.toggle('editon', state.editMode); showToast(state.editMode ? 'Edit mode ON — Record overdubs the current take' : 'Edit mode off'); };
 el.playPauseBtn.onclick = () => { state.playing ? pausePlayback() : startPlayback(); };
 el.stopBtn.onclick = () => { if (state.recording) stopRecording(); else { pausePlayback(); seek(0, false); } };
 el.takesBtn.onclick = () => toggleTakesWindow();
 el.tpHeader.onclick = () => toggleTakesWindow();
+el.projectBtn.onclick = (e) => showProjectMenu(e);
 el.testBtn.onclick = testOutput;
 el.addTrackBtn.onclick = userAddTrack;
 el.addTrackRow.onclick = userAddTrack;
@@ -806,6 +928,9 @@ document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
+  if (mod && e.code === 'KeyS') { e.preventDefault(); saveProject(); return; }
+  if (mod && e.code === 'KeyO') { e.preventDefault(); openProject(); return; }
+  if (mod && e.code === 'KeyN') { e.preventDefault(); newProject(); return; }
   if (mod) return;
   if (e.repeat) return;
   if (e.code === 'Space') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); if (state.recording) stopRecording(); else state.playing ? pausePlayback() : startPlayback(); }
@@ -813,7 +938,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Init
-setBpm(100); updatePlayIcon();
+setBpm(100); updatePlayIcon(); updateTitle();
+el.metroBtn.classList.toggle('active', state.metronomeOn);
 addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
 buildTracksDOM(); layout(); renderTakesWindow(); listDevices();
 navigator.mediaDevices.addEventListener('devicechange', listDevices);
