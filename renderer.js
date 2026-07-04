@@ -196,7 +196,7 @@ function snap() {
     trackSeq: state.trackSeq, selectedTrackId: state.selectedTrackId,
     tracks: state.tracks.map((tr) => ({
       id: tr.id, name: tr.name, color: tr.color, takeSeq: tr.takeSeq, activeTakeId: tr.activeTakeId, volume: tr.volume, muted: tr.muted, soloed: tr.soloed,
-      takes: tr.takes.map((t) => ({ id: t.id, num: t.num, name: t.name, offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd, createdAt: t.createdAt, buffer: t.buffer })),
+      takes: tr.takes.map((t) => ({ id: t.id, num: t.num, name: t.name, loaded: t.loaded, offset: t.offset, trimStart: t.trimStart, trimEnd: t.trimEnd, createdAt: t.createdAt, buffer: t.buffer })),
     })),
   };
 }
@@ -207,7 +207,7 @@ function restore(s) {
   state.trackSeq = s.trackSeq; state.selectedTrackId = s.selectedTrackId;
   state.tracks = s.tracks.map((t) => ({
     id: t.id, name: t.name, color: t.color, takeSeq: t.takeSeq, activeTakeId: t.activeTakeId, volume: t.volume == null ? 1 : t.volume, muted: !!t.muted, soloed: !!t.soloed, gainNode: null, els: null,
-    takes: t.takes.map((tk) => ({ id: tk.id, num: tk.num, name: tk.name || ('Take ' + tk.num), offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd, createdAt: tk.createdAt, buffer: tk.buffer, peaks: null })),
+    takes: t.takes.map((tk) => ({ id: tk.id, num: tk.num, name: tk.name || ('Take ' + tk.num), loaded: !!tk.loaded, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd, createdAt: tk.createdAt, buffer: tk.buffer, peaks: null })),
   }));
   buildTracksDOM(); layout(); renderTakesWindow();
 }
@@ -262,10 +262,11 @@ function startRename(tr) {
   title.replaceWith(input); tr.els.title = input;
   input.focus(); input.select();
 }
-function addTake(tr, buffer, offset, name) {
-  tr.takeSeq++;
-  const t = { id: ++idCounter, num: tr.takeSeq, name: name || ('Take ' + tr.takeSeq), buffer, peaks: null, offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, createdAt: new Date() };
-  tr.takes.push(t); tr.activeTakeId = t.id;
+function renumberTakes(tr) { tr.takes.forEach((t, i) => { t.num = i + 1; if (!t.loaded) t.name = 'Take ' + (i + 1); }); tr.takeSeq = tr.takes.length; }
+function addTake(tr, buffer, offset, name, loaded) {
+  const n = tr.takes.length + 1;
+  const t = { id: ++idCounter, num: n, name: name || ('Take ' + n), loaded: !!loaded, buffer, peaks: null, offset: Math.max(0, offset || 0), trimStart: 0, trimEnd: buffer.duration, createdAt: new Date() };
+  tr.takes.push(t); tr.activeTakeId = t.id; renumberTakes(tr);
   return t;
 }
 function setActiveTake(tr, takeId) { pushUndo(); tr.activeTakeId = takeId; renderTrack(tr); updateSelectionUI(); renderTakesWindow(); layout(); }
@@ -273,6 +274,7 @@ function removeTake(tr, takeId) {
   pushUndo();
   tr.takes = tr.takes.filter((t) => t.id !== takeId);
   if (tr.activeTakeId === takeId) tr.activeTakeId = tr.takes.length ? tr.takes[tr.takes.length - 1].id : null;
+  renumberTakes(tr);
   renderTrack(tr); layout(); renderTakesWindow();
 }
 
@@ -385,7 +387,7 @@ async function loadFileInto(tr) {
   try {
     const buf = await ctx().decodeAudioData(res.data.slice(0));
     pushUndo();
-    addTake(tr, buf, state.playhead, res.name.replace(/\.[^.]+$/, ''));
+    addTake(tr, buf, state.playhead, res.name.replace(/\.[^.]+$/, ''), true);
     selectTrack(tr.id); renderTrack(tr); layout(); renderTakesWindow();
     showToast(`Loaded into ${tr.name}`);
   } catch (e) { console.error(e); showToast('Could not decode that file'); }
@@ -791,7 +793,7 @@ function serializeProject() {
     tracks: state.tracks.map((tr) => ({
       name: tr.name, color: tr.color, volume: tr.volume, muted: tr.muted, soloed: tr.soloed,
       takeSeq: tr.takeSeq, activeTakeNum: (activeTake(tr) ? activeTake(tr).num : null),
-      takes: tr.takes.map((tk) => ({ num: tk.num, name: tk.name, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd,
+      takes: tr.takes.map((tk) => ({ num: tk.num, name: tk.name, loaded: tk.loaded, offset: tk.offset, trimStart: tk.trimStart, trimEnd: tk.trimEnd,
         createdAt: (tk.createdAt instanceof Date ? tk.createdAt.toISOString() : tk.createdAt), wav: u8ToBase64(encodeWav(tk.buffer)) })),
     })),
   };
@@ -833,11 +835,12 @@ async function loadProject(p) {
     const tr = { id: ++idCounter, name: t.name, color: t.color, volume: t.volume == null ? 1 : t.volume, muted: !!t.muted, soloed: !!t.soloed, takeSeq: t.takeSeq || (t.takes ? t.takes.length : 0), activeTakeId: null, gainNode: null, els: null, takes: [] };
     for (const tk of (t.takes || [])) {
       let buf; try { buf = await c.decodeAudioData(base64ToU8(tk.wav).buffer.slice(0)); } catch (e) { console.warn('take decode', e); continue; }
-      const take = { id: ++idCounter, num: tk.num, name: tk.name || ('Take ' + tk.num), buffer: buf, peaks: null, offset: tk.offset || 0, trimStart: tk.trimStart || 0, trimEnd: tk.trimEnd != null ? tk.trimEnd : buf.duration, createdAt: tk.createdAt ? new Date(tk.createdAt) : new Date() };
+      const take = { id: ++idCounter, num: tk.num, name: tk.name || ('Take ' + tk.num), loaded: !!tk.loaded, buffer: buf, peaks: null, offset: tk.offset || 0, trimStart: tk.trimStart || 0, trimEnd: tk.trimEnd != null ? tk.trimEnd : buf.duration, createdAt: tk.createdAt ? new Date(tk.createdAt) : new Date() };
       tr.takes.push(take);
       if (tk.num === t.activeTakeNum) tr.activeTakeId = take.id;
     }
     if (!tr.activeTakeId && tr.takes.length) tr.activeTakeId = tr.takes[tr.takes.length - 1].id;
+    renumberTakes(tr);
     tracks.push(tr);
   }
   state.tracks = tracks;
