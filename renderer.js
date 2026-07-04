@@ -7,7 +7,7 @@ const { ipcRenderer } = require('electron');
 // Config / State
 // ===========================================================================
 let PPS = 100;
-const PPS_MIN = 24, PPS_MAX = 420;
+const PPS_MIN = 6, PPS_MAX = 420;
 const MIN_DURATION = 20;
 const RULER_H = 32, TRACK_H = 118;
 const WAVE_H = TRACK_H - 14;
@@ -395,10 +395,13 @@ function hideCtx() { el.ctxMenu.classList.add('hidden'); }
 // Timeline sizing / rendering
 // ===========================================================================
 function contentDuration() {
-  let d = MIN_DURATION;
+  let d = 0;
   state.tracks.forEach((tr) => { const tk = activeTake(tr); if (tk) d = Math.max(d, tk.offset + visDur(tk)); });
   if (state.recording) d = Math.max(d, state.playhead + 1);
-  return d;
+  // Always fill at least the visible width (so zooming out reveals more time),
+  // plus some headroom past the content, and never less than MIN_DURATION.
+  const viewSecs = (el.timelineScroll.clientWidth || 900) / PPS;
+  return Math.max(d + 4, viewSecs, MIN_DURATION);
 }
 function invalidatePeaks() { state.tracks.forEach((tr) => tr.takes.forEach((t) => (t.peaks = null))); }
 function layout() {
@@ -413,9 +416,12 @@ function drawRuler(px) {
   const c = el.rulerCanvas, h = RULER_H; c.width = px; c.height = h;
   const g = c.getContext('2d'); g.fillStyle = '#1c2628'; g.fillRect(0, 0, px, h);
   g.strokeStyle = '#46594f'; g.fillStyle = '#8fa596'; g.font = '10px sans-serif'; g.lineWidth = 1;
-  const secs = Math.ceil(px / PPS), labelEvery = PPS < 45 ? 5 : (PPS < 90 ? 2 : 1);
+  const secs = Math.ceil(px / PPS);
+  const labelEvery = PPS < 12 ? 30 : PPS < 20 ? 15 : PPS < 35 ? 10 : PPS < 55 ? 5 : PPS < 90 ? 2 : 1;
   for (let s = 0; s <= secs; s++) {
-    const x = Math.round(s * PPS) + 0.5, major = s % labelEvery === 0;
+    const major = s % labelEvery === 0;
+    if (!major && PPS < 18) continue; // too dense to draw a tick every second
+    const x = Math.round(s * PPS) + 0.5;
     g.beginPath(); g.moveTo(x, h - (major ? 15 : 7)); g.lineTo(x, h); g.stroke();
     if (major) g.fillText(fmt(s), x + 3, 13);
   }
@@ -792,7 +798,7 @@ styleRange(el.clickVol);
 holdRepeat(el.bpmUp, +1); holdRepeat(el.bpmDown, -1); initBpmDrag();
 
 el.rulerCanvas.addEventListener('pointerdown', timelineDown);
-el.timelineScroll.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(PPS * Math.exp(-e.deltaY * 0.002), e.clientX); } }, { passive: false });
+el.timelineScroll.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(PPS * Math.exp(-e.deltaY * 0.004), e.clientX); } }, { passive: false });
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && !el.settingsModal.classList.contains('hidden')) { closeSettings(); return; }
@@ -811,5 +817,5 @@ setBpm(100); updatePlayIcon();
 addTrack(true); addTrack(true); state.selectedTrackId = state.tracks[0].id;
 buildTracksDOM(); layout(); renderTakesWindow(); listDevices();
 navigator.mediaDevices.addEventListener('devicechange', listDevices);
-window.addEventListener('resize', renderTakesWindow);
+window.addEventListener('resize', () => { layout(); renderTakesWindow(); });
 setTimeout(() => el.splash && el.splash.classList.add('hide'), 1150);
