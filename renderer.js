@@ -77,7 +77,7 @@ const el = {};
   'bpmUp','bpmDown','bpmValue','beatsPerBar','countIn','clickVol',
   'clock','projectBtn','takesBtn','testBtn','addTrackBtn','loadBackingBtn','settingsBtn',
   'settingsModal','settingsClose','settingsBackdrop','inputDevice','outputDevice','monitorToggle','langSelect','refreshDevices','deviceStatus',
-  'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','playhead',
+  'labels','trackLabels','addTrackRow','trackLanes','timelineScroll','timeline','rulerCanvas','gridCanvas','playhead',
   'takesPanel','tpHeader','tpTrack','tpBody','toast','tooltip','ctxMenu','splash',
 ].forEach((id) => (el[id] = $(id)));
 
@@ -421,7 +421,7 @@ function invalidatePeaks() { state.tracks.forEach((tr) => tr.takes.forEach((t) =
 function layout() {
   const px = Math.ceil(contentDuration() * PPS);
   el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px';
-  drawRuler(px);
+  drawRuler(px); drawGrid(px);
   if (!state.recording) state.tracks.forEach(renderTrack);
   updatePlayheadHeight();
   renderPlayhead();
@@ -454,7 +454,33 @@ function drawRuler(px) {
   }
   g.textAlign = 'left'; g.textBaseline = 'alphabetic';
 }
-function refreshRuler() { drawRuler(Math.ceil(contentDuration() * PPS)); }
+function drawGrid(px) {
+  const c = el.gridCanvas, h = Math.max(1, state.tracks.length * TRACK_H);
+  c.width = px; c.height = h; c.style.width = px + 'px'; c.style.height = h + 'px';
+  const g = c.getContext('2d');
+  g.fillStyle = '#1a2325'; g.fillRect(0, 0, px, h);
+  const beats = bpb(), beatDur = 60 / state.bpm, barDur = beats * beatDur;
+  const barPx = barDur * PPS, beatPx = beatDur * PPS;
+  // faint alternate-bar shading
+  g.fillStyle = 'rgba(255,255,255,.014)';
+  for (let bar = 0; bar <= Math.ceil(px / barPx); bar++) if (bar % 2 === 1) g.fillRect(Math.round(bar * barPx), 0, Math.max(1, Math.round(barPx)), h);
+  // finest subdivision (per beat) chosen by zoom: 16th → 8th → beat → bars
+  let div = 0; if (beatPx >= 12) div = 1; if (beatPx / 2 >= 14) div = 2; if (beatPx / 4 >= 14) div = 4;
+  g.lineWidth = 1;
+  if (div >= 1) {
+    const subPx = beatPx / div, totalSubs = Math.ceil(px / subPx) + 1;
+    for (let i = 0; i <= totalSubs; i++) {
+      const x = Math.round(i * subPx) + 0.5, isBeat = i % div === 0, isBar = isBeat && (Math.round(i / div) % beats === 0);
+      g.strokeStyle = isBar ? 'rgba(190,205,175,.16)' : isBeat ? 'rgba(170,190,160,.09)' : 'rgba(150,170,150,.045)';
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    }
+  } else {
+    const totalBars = Math.ceil(px / barPx) + 1;
+    g.strokeStyle = 'rgba(190,205,175,.14)';
+    for (let bar = 0; bar <= totalBars; bar++) { const x = Math.round(bar * barPx) + 0.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+  }
+}
+function refreshRuler() { const px = Math.ceil(contentDuration() * PPS); drawRuler(px); drawGrid(px); }
 function renderPlayhead() { el.playhead.style.left = Math.round(state.playhead * PPS) + 'px'; el.clock.textContent = `${fmt(state.playhead, true)} / ${fmt(contentDuration(), true)}`; }
 function fmt(s, tenths) { if (!isFinite(s)) s = 0; const m = Math.floor(s / 60), sec = Math.floor(s % 60).toString().padStart(2, '0'); if (tenths) return `${m}:${sec}.${Math.floor((s * 10) % 10)}`; return `${m}:${sec}`; }
 function autoScroll() { const x = state.playhead * PPS, sc = el.timelineScroll; if (x < sc.scrollLeft + 40 || x > sc.scrollLeft + sc.clientWidth - 60) sc.scrollLeft = x - sc.clientWidth * 0.4; }
@@ -605,7 +631,7 @@ function recFrame() {
   while (state.livePeaks.length <= need) state.livePeaks.push(mx);
   drawRecordingClip();
   const px = Math.ceil(contentDuration() * PPS);
-  el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px'; drawRuler(px);
+  el.timeline.style.width = px + 'px'; el.rulerCanvas.style.width = px + 'px'; drawRuler(px); drawGrid(px);
   renderPlayhead(); autoScroll();
   state.recRaf = requestAnimationFrame(recFrame);
 }

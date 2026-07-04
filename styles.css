@@ -122,10 +122,11 @@ body {
 .timeline { position: relative; height: 100%; min-width: 100%; }
 
 .ruler { display: block; height: var(--RULER); width: 100%; border-bottom: 1px solid var(--border); background: var(--field); cursor: text; }
-.lane-body { position: relative; width: 100%; border-bottom: 1px solid var(--border); overflow: hidden;
-  background: repeating-linear-gradient(90deg, #1f2a2c 0 39px, #233032 39px 40px); }
+.grid { position: absolute; top: var(--RULER); left: 0; z-index: 0; pointer-events: none; display: block; }
+#trackLanes { position: relative; z-index: 1; }
+.lane-body { position: relative; width: 100%; border-bottom: 1px solid var(--border); overflow: hidden; background: transparent; }
 .lane-body.track { height: var(--TRACK); }
-.lane-body.track.loaded { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--tc) 10%, #1f2a2c) 0 39px, color-mix(in srgb, var(--tc) 15%, #233032) 39px 40px); }
+.lane-body.track.loaded { background: color-mix(in srgb, var(--tc) 9%, transparent); }
 .lane-body.take { height: var(--TAKE); }
 .lane-body.take canvas { display: block; }
 
