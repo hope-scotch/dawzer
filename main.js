@@ -55,14 +55,18 @@ ipcMain.handle('confirm-unsaved', async () => {
   return response; // 0 = Save, 1 = Don't Save, 2 = Cancel
 });
 
+function winAlive() { return mainWindow && !mainWindow.isDestroyed(); }
 function readAndSendProject(p) {
-  try { const data = fs.readFileSync(p); if (mainWindow) mainWindow.webContents.send('open-project-file', { name: path.basename(p), data: data.buffer }); }
-  catch (e) { console.error('open path', e); }
+  try {
+    if (!winAlive()) { pendingOpenPath = p; return; }
+    const data = fs.readFileSync(p);
+    mainWindow.webContents.send('open-project-file', { name: path.basename(p), data: data.buffer });
+  } catch (e) { console.error('open path', e); }
 }
 function openPath(p) {
   if (!p) return;
-  if (mainWindow && !mainWindow.webContents.isLoading()) readAndSendProject(p);
-  else pendingOpenPath = p;
+  if (winAlive() && !mainWindow.webContents.isLoading()) readAndSendProject(p);
+  else { pendingOpenPath = p; if (app.isReady() && !winAlive()) createWindow(); }
 }
 // macOS: double-clicking a .dz sends an open-file event.
 app.on('open-file', (e, p) => { e.preventDefault(); openPath(p); });
